@@ -1,11 +1,10 @@
 import torch   
 
 class InstructionCollator:
-    def __init__(self, pad_token_id=50256, ignore_index=-100, allowed_max_length=None, device="cpu"):
+    def __init__(self, pad_token_id=50256, ignore_index=-100, allowed_max_length=None):
         self.pad_token_id = pad_token_id
         self.ignore_index = ignore_index
         self.allowed_max_length = allowed_max_length
-        self.device = device
 
     def __call__(self, batch):
         # padding + target masking logic
@@ -41,8 +40,7 @@ class InstructionCollator:
             inputs_lst.append(inputs)
             targets_lst.append(targets)
 
-        # Convert list of inputs and targets to tensors and transfer to target device
-        inputs_tensor = torch.stack(inputs_lst).to(self.device)
-        targets_tensor = torch.stack(targets_lst).to(self.device)
+        inputs_tensor = torch.stack(inputs_lst)
+        targets_tensor = torch.stack(targets_lst)
 
         return inputs_tensor, targets_tensor

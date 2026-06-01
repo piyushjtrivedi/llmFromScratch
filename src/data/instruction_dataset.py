@@ -14,7 +14,7 @@ class InstructionDataset(Dataset):
             response_text = f"\n\n### Response:\n{entry['output']}"
             full_text = instruction_plus_input + response_text
             self.encoded_texts.append(
-                tokenizer.encode(full_text)
+                tokenizer.encode(full_text, allowed_special={'<|endoftext|>'})
             )
 
     def __getitem__(self, index):

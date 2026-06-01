@@ -1,5 +1,9 @@
 tiktoken
 torch
-tensorflow
 tqdm
 gradio
+matplotlib
+# HuggingFace dependencies — required for gemma3-1b and future HF models
+huggingface_hub   # checkpoint download and caching
+safetensors       # preferred shard format for HF models
+transformers      # AutoTokenizer for HuggingFace tokenizers

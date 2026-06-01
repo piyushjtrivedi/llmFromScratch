@@ -17,6 +17,8 @@ env/
 data/gpt2/
 data/fine_tuned_weights/
 data/instruction-data.json
+data/gemma3_cache/
+data/hf_cache/
 
 # Jupyter
 .ipynb_checkpoints/

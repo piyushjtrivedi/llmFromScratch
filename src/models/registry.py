@@ -1,26 +1,30 @@
 import os
+import json
 import torch
 import logging
 
 from src.models.gpt2.gpt import GPTModel
 from src.utils.weights_loader.gpt2_weights_loader import GPT2WeightsLoader
 
+from src.models.gemma3.gemma import GemmaModel
+from src.utils.weights_loader.gemma3_weights_loader import Gemma3WeightsLoader
+
 logger = logging.getLogger(__name__)
 
 _MODELS = {
-    "gpt2-small (124M)": GPTModel,
+    "gpt2-small (124M)":  GPTModel,
     "gpt2-medium (355M)": GPTModel,
-    "gpt2-large (774M)": GPTModel,
-    "gpt2-xl (1558M)": GPTModel,
-    # "gemma-2b": GemmaModel,
+    "gpt2-large (774M)":  GPTModel,
+    "gpt2-xl (1558M)":    GPTModel,
+    "gemma3-1b":          GemmaModel,
 }
 
 _LOADERS = {
-    "gpt2-small (124M)": lambda: GPT2WeightsLoader("124M"),
+    "gpt2-small (124M)":  lambda: GPT2WeightsLoader("124M"),
     "gpt2-medium (355M)": lambda: GPT2WeightsLoader("355M"),
-    "gpt2-large (774M)": lambda: GPT2WeightsLoader("774M"),
-    "gpt2-xl (1558M)": lambda: GPT2WeightsLoader("1558M"),
-    # "gemma-2b": lambda: GemmaWeightsLoader("2b"),
+    "gpt2-large (774M)":  lambda: GPT2WeightsLoader("774M"),
+    "gpt2-xl (1558M)":    lambda: GPT2WeightsLoader("1558M"),
+    "gemma3-1b":          lambda: Gemma3WeightsLoader(),
 }
 
 _FINETUNED_WEIGHTS_DIR = "data/fine_tuned_weights"
@@ -52,3 +56,26 @@ def save_weights(model, model_name: str, save_dir: str = _FINETUNED_WEIGHTS_DIR)
     torch.save(model.state_dict(), save_path)
     logger.info(f"[Registry] Fine-tuned weights saved to {save_path}")
     return save_path
+
+
+# ── Metrics (loss curves) ────────────────────────────────────────────────────
+
+def get_metrics_path(model_name: str, save_dir: str = _FINETUNED_WEIGHTS_DIR) -> str:
+    return os.path.join(save_dir, f"{_sanitize(model_name)}_metrics.json")
+
+
+def save_metrics(metrics: dict, model_name: str, save_dir: str = _FINETUNED_WEIGHTS_DIR) -> str:
+    save_path = get_metrics_path(model_name, save_dir)
+    os.makedirs(os.path.dirname(save_path), exist_ok=True)
+    with open(save_path, "w", encoding="utf-8") as f:
+        json.dump(metrics, f, indent=2)
+    logger.info(f"[Registry] Training metrics saved to {save_path}")
+    return save_path
+
+
+def load_metrics(model_name: str, save_dir: str = _FINETUNED_WEIGHTS_DIR) -> dict | None:
+    metrics_path = get_metrics_path(model_name, save_dir)
+    if not os.path.exists(metrics_path):
+        return None
+    with open(metrics_path, "r", encoding="utf-8") as f:
+        return json.load(f)
