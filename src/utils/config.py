@@ -93,7 +93,7 @@ Model_Configs = {
         ],
         "dtype": torch.bfloat16,
         "drop_rate": 0.0,
-        "tokenizer_id": "google/gemma-3-1b",  # HuggingFace tokenizer (vocab=262144)
+        "tokenizer_id": "google/gemma-3-1b-pt",  # HuggingFace tokenizer (vocab=262144)
         # Conservative MPS memory defaults for a ~2.3 GB bf16 model
         "batch_size": 1,
         "allowed_max_length": 64,

@@ -6,12 +6,12 @@ from src.utils.colab import get_data_dir
 
 logger = logging.getLogger(__name__)
 
-_GEMMA3_1B_REPO = "google/gemma-3-1b"
+_GEMMA3_1B_REPO = "google/gemma-3-1b-pt"
 
 
 class Gemma3WeightsLoader(HFWeightsLoader):
     """
-    Downloads google/gemma-3-1b from HuggingFace Hub and maps its weights
+    Downloads google/gemma-3-1b-pt from HuggingFace Hub and maps its weights
     into our custom GemmaModel.
 
     Why the key mapping is needed:
