@@ -1,6 +1,8 @@
 import logging
+import os
 
 from src.utils.weights_loader.hf_weights_loader import HFWeightsLoader
+from src.utils.colab import get_data_dir
 
 logger = logging.getLogger(__name__)
 
@@ -53,7 +55,7 @@ class Gemma3WeightsLoader(HFWeightsLoader):
     """
 
     def __init__(self, repo_id: str = _GEMMA3_1B_REPO):
-        super().__init__(repo_id=repo_id, cache_dir="data/gemma3_cache")
+        super().__init__(repo_id=repo_id, cache_dir=os.path.join(get_data_dir(), "gemma3_cache"))
 
     def _map_keys(self, hf_state_dict: dict, model) -> dict:
         mapped = {}

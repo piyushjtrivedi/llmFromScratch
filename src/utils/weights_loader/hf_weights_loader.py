@@ -5,10 +5,9 @@ from abc import abstractmethod
 import torch
 
 from src.utils.weights_loader.base_weights_loader import BaseWeightsLoader
+from src.utils.colab import get_data_dir
 
 logger = logging.getLogger(__name__)
-
-_DEFAULT_HF_CACHE = "data/hf_cache"
 
 
 class HFWeightsLoader(BaseWeightsLoader):
@@ -40,9 +39,9 @@ class HFWeightsLoader(BaseWeightsLoader):
         huggingface-cli login   # required for gated models (e.g. Gemma)
     """
 
-    def __init__(self, repo_id: str, cache_dir: str = _DEFAULT_HF_CACHE):
+    def __init__(self, repo_id: str, cache_dir: str = None):
         self.repo_id = repo_id
-        self.cache_dir = cache_dir
+        self.cache_dir = cache_dir or os.path.join(get_data_dir(), "hf_cache")
 
     def _download(self) -> dict:
         """

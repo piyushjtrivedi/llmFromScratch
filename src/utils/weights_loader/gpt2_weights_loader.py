@@ -6,15 +6,15 @@ import json
 import logging
 
 from src.utils.gpt_download import download_and_load_gpt2, load_gpt2_params_from_tf_ckpt
-
 from src.utils.weights_loader.base_weights_loader import BaseWeightsLoader
+from src.utils.colab import get_data_dir
 
 logger = logging.getLogger(__name__)
 
 class GPT2WeightsLoader(BaseWeightsLoader):
     def __init__(self, model_size = "124M"):
 
-        weights_path = "data/gpt2"
+        weights_path = os.path.join(get_data_dir(), "gpt2")
         model_path = os.path.join(weights_path, model_size)  
 
         if not os.path.exists(model_path):

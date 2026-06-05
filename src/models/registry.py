@@ -9,6 +9,8 @@ from src.utils.weights_loader.gpt2_weights_loader import GPT2WeightsLoader
 from src.models.gemma3.gemma import GemmaModel
 from src.utils.weights_loader.gemma3_weights_loader import Gemma3WeightsLoader
 
+from src.utils.colab import get_data_dir
+
 logger = logging.getLogger(__name__)
 
 _MODELS = {
@@ -27,14 +29,21 @@ _LOADERS = {
     "gemma3-1b":          lambda: Gemma3WeightsLoader(),
 }
 
-_FINETUNED_WEIGHTS_DIR = "data/fine_tuned_weights"
+# Subdirectory name within the project data dir — resolved at call time so
+# Colab / Drive paths are picked up correctly rather than evaluated once on import.
+_FINETUNED_SUBDIR = "fine_tuned_weights"
+
+
+def _finetuned_dir() -> str:
+    return os.path.join(get_data_dir(), _FINETUNED_SUBDIR)
 
 
 def _sanitize(model_name: str) -> str:
     return model_name.replace(" ", "_").replace("(", "").replace(")", "")
 
 
-def get_finetuned_weights_path(model_name: str, save_dir: str = _FINETUNED_WEIGHTS_DIR) -> str:
+def get_finetuned_weights_path(model_name: str, save_dir: str = None) -> str:
+    save_dir = save_dir or _finetuned_dir()
     return os.path.join(save_dir, f"{_sanitize(model_name)}.pth")
 
 
@@ -50,7 +59,7 @@ def get_weights_loader(model_name: str):
     return _LOADERS[model_name]()
 
 
-def save_weights(model, model_name: str, save_dir: str = _FINETUNED_WEIGHTS_DIR) -> str:
+def save_weights(model, model_name: str, save_dir: str = None) -> str:
     save_path = get_finetuned_weights_path(model_name, save_dir)
     os.makedirs(os.path.dirname(save_path), exist_ok=True)
     torch.save(model.state_dict(), save_path)
@@ -60,11 +69,12 @@ def save_weights(model, model_name: str, save_dir: str = _FINETUNED_WEIGHTS_DIR)
 
 # ── Metrics (loss curves) ────────────────────────────────────────────────────
 
-def get_metrics_path(model_name: str, save_dir: str = _FINETUNED_WEIGHTS_DIR) -> str:
+def get_metrics_path(model_name: str, save_dir: str = None) -> str:
+    save_dir = save_dir or _finetuned_dir()
     return os.path.join(save_dir, f"{_sanitize(model_name)}_metrics.json")
 
 
-def save_metrics(metrics: dict, model_name: str, save_dir: str = _FINETUNED_WEIGHTS_DIR) -> str:
+def save_metrics(metrics: dict, model_name: str, save_dir: str = None) -> str:
     save_path = get_metrics_path(model_name, save_dir)
     os.makedirs(os.path.dirname(save_path), exist_ok=True)
     with open(save_path, "w", encoding="utf-8") as f:
@@ -73,7 +83,7 @@ def save_metrics(metrics: dict, model_name: str, save_dir: str = _FINETUNED_WEIG
     return save_path
 
 
-def load_metrics(model_name: str, save_dir: str = _FINETUNED_WEIGHTS_DIR) -> dict | None:
+def load_metrics(model_name: str, save_dir: str = None) -> dict | None:
     metrics_path = get_metrics_path(model_name, save_dir)
     if not os.path.exists(metrics_path):
         return None

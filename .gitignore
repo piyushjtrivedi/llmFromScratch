@@ -23,6 +23,10 @@ data/hf_cache/
 # Jupyter
 .ipynb_checkpoints/
 
+# Editor backup files
+*\ copy.py
+* copy.py
+
 # OS
 .DS_Store
 Thumbs.db
