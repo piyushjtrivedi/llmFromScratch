@@ -49,6 +49,11 @@ def main():
                         help="LoRA rank r (default: 8)")
     parser.add_argument("--lora-alpha", type=float, default=16.0,
                         help="LoRA alpha scaling factor (default: 16.0)")
+    parser.add_argument("--eval-freq", type=int, default=50,
+                        help="Evaluate every N optimizer steps (default: 50). "
+                             "Low values (e.g. 5) make eval dominate runtime.")
+    parser.add_argument("--eval-iter", type=int, default=5,
+                        help="Number of batches used per evaluation (default: 5)")
     args = parser.parse_args()
     logger.info(f"[Arguments received]: {args}")
 
@@ -205,7 +210,7 @@ def main():
     trainer_instance = ModelTrainer()
     train_losses, val_losses, tokens_seen = trainer_instance(
         model, train_loader, val_loader, optimizer, device,
-        num_epochs=num_epochs, eval_freq=5, eval_iter=5,
+        num_epochs=num_epochs, eval_freq=args.eval_freq, eval_iter=args.eval_iter,
         start_context=InstructionDataset.format_input(val_data[0]),
         tokenizer=tokenizer,
         gradient_accumulation_steps=gradient_accumulation_steps,
@@ -230,7 +235,7 @@ def main():
             "grad_norms": trainer_instance.grad_norms,
             "peak_memory_gb": trainer_instance.peak_memory_gb,
             "num_epochs": num_epochs,
-            "eval_freq": 5,
+            "eval_freq": args.eval_freq,
             "batch_size": batch_size,
             "gradient_accumulation_steps": gradient_accumulation_steps,
             "learning_rate": args.lr,

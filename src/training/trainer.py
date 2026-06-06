@@ -61,10 +61,12 @@ class ModelTrainer:
                     if scheduler is not None:
                         scheduler.step()
 
+                    # Record time for this optimizer step (pure training time, not including eval).
+                    # The start time is reset AFTER eval below so that eval time is never
+                    # absorbed into the next step's measurement.
                     if self._step_start_time is not None:
                         self.step_times_sec.append(time.time() - self._step_start_time)
-                    self._step_start_time = time.time()  # always reset, even on the first step
-                        
+
                     optimizer.zero_grad(set_to_none=True) # Reset loss gradients from previous batch iteration (set_to_none frees memory immediately)
                     # Free MPS/CUDA cache after each weight update to avoid fragmentation
                     if device.type == "mps":
@@ -108,6 +110,9 @@ class ModelTrainer:
                             self._best_val_loss = val_loss
                             save_weights(model, model_name)
                             logger.info(f"[Checkpoint] New best val loss {val_loss:.3f} — weights saved")
+
+                    # Reset timer AFTER eval so eval time is excluded from the next step.
+                    self._step_start_time = time.time()
 
 
             # Flush unused cached memory after each epoch to prevent OOM on MPS/CUDA
