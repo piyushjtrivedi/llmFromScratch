@@ -139,7 +139,7 @@ GPT-2 uses `tiktoken`; Gemma3 uses a HuggingFace `AutoTokenizer`. Rather than br
 
 > **Status:** Architecture and weights loader are implemented and code-complete. End-to-end training has not yet been verified on hardware — treat as unvalidated until a test run is confirmed.
 
-Matches the `google/gemma-3-1b` architecture exactly so pretrained HuggingFace weights transfer without reshaping.
+Matches the `google/gemma-3-1b-pt` architecture exactly so pretrained HuggingFace weights transfer without reshaping.
 
 | Component | Implementation |
 |-----------|---------------|
@@ -151,7 +151,7 @@ Matches the `google/gemma-3-1b` architecture exactly so pretrained HuggingFace w
 | QK normalization | Per-head RMSNorm on queries and keys before attention scores |
 | Sliding window | Local attention window of 512 tokens; full-attention layers see the entire context |
 | Weight tying | `lm_head.weight` is tied to `embed_tokens.weight` (Gemma3 uses the same matrix for input and output) |
-| Weights source | `google/gemma-3-1b` on HuggingFace Hub (gated — requires license acceptance) |
+| Weights source | `google/gemma-3-1b-pt` on HuggingFace Hub (gated — requires license acceptance) |
 
 #### RoPE: Local vs Global
 
@@ -302,6 +302,41 @@ python -m src.main --model gemma3-1b --lora --lora-rank 16 --lora-alpha 32
 
 ---
 
+## Google Colab and Google Drive
+
+### Environment Detection (`src/utils/colab.py`)
+
+`get_data_dir()` is called at the moment a path is needed (not at import time) and returns:
+
+| Environment | Path returned |
+|-------------|--------------|
+| Local / non-Colab | `data/` (relative to working directory) |
+| Colab — Drive mounted | `/content/drive/MyDrive/llmFromScratch/` |
+| Colab — Drive not yet mounted | Mounts Drive automatically, then returns Drive path |
+| Colab — Drive mount fails | Falls back to `/content/data/` with a warning |
+
+All weight loaders (`GPT2WeightsLoader`, `Gemma3WeightsLoader`, `HFWeightsLoader`) and the model registry call `get_data_dir()` when constructing paths, so checkpoints, HuggingFace caches, and fine-tuned weights all land in Google Drive automatically when running on Colab.
+
+### Colab Runner Notebook (`notebooks/colab_runner.ipynb`)
+
+A single notebook that handles the full Colab setup: Drive mount → git clone/pull → dependency install → HuggingFace login → training → diagnostic plot.
+
+**Why git clone is required even when using VS Code:** The Colab runtime runs on Google's servers. VS Code (via the Google Colab extension) is the UI only — local project files are not accessible in the runtime. Code must be pushed to GitHub first and pulled in Colab.
+
+The notebook clears `__pycache__` after every clone/pull to prevent stale bytecode from shadowing updated source files — a common cause of "wrong repo ID" errors when the code is updated between sessions.
+
+### Naming: Internal vs HuggingFace
+
+| Identifier | Value | Where used |
+|-----------|-------|-----------|
+| Internal model name | `gemma3-1b` | CLI `--model`, config keys, registry keys |
+| HuggingFace repo | `google/gemma-3-1b-pt` | `_GEMMA3_1B_REPO`, weights download URL |
+| HuggingFace tokenizer | `google/gemma-3-1b-pt` | `tokenizer_id` in config, `AutoTokenizer.from_pretrained` |
+
+These are kept separate deliberately — the internal name is stable across any future model renames on HuggingFace.
+
+---
+
 ## Dependencies
 
 | Package | Purpose |
@@ -320,7 +355,7 @@ Large binary artefacts (`data/gpt2/`, `data/gemma3_cache/`, `data/hf_cache/`, `d
 
 Gemma3 is a gated model on HuggingFace. Before running with `--model gemma3-1b`:
 
-1. Accept the license at [huggingface.co/google/gemma-3-1b](https://huggingface.co/google/gemma-3-1b)
+1. Accept the license at [huggingface.co/google/gemma-3-1b-pt](https://huggingface.co/google/gemma-3-1b-pt)
 2. Create an access token at [huggingface.co/settings/tokens](https://huggingface.co/settings/tokens)
 3. Run `huggingface-cli login` and paste your token when prompted
 

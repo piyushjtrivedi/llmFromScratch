@@ -16,6 +16,7 @@ A hands-on implementation of transformer-based language models built from the gr
 - [Training Diagnostics](#training-diagnostics)
 - [LoRA Fine-tuning](#lora-fine-tuning)
 - [Frontend Demo](#frontend-demo)
+- [Google Colab](#google-colab)
 - [Extending with a New Model](#extending-with-a-new-model)
 - [Roadmap](#roadmap)
 - [References](#references)
@@ -93,6 +94,8 @@ llmFromScratch/
 │           ├── hf_weights_loader.py   # Abstract HuggingFace loader (download + cache)
 │           ├── gpt2_weights_loader.py # GPT-2 key mapping
 │           └── gemma3_weights_loader.py # Gemma3 key mapping
+├── notebooks/
+│   └── colab_runner.ipynb             # One-click Colab launcher (Drive mount, clone, train, plot)
 ├── frontend/
 │   └── app.py                         # Gradio multi-model chat UI
 ├── documentations/
@@ -127,7 +130,7 @@ GPT-2 pretrained weights and the instruction dataset are downloaded automaticall
 
 Gemma3 is a gated model — complete these steps once before running:
 
-1. Accept the license at [huggingface.co/google/gemma-3-1b](https://huggingface.co/google/gemma-3-1b)
+1. Accept the license at [huggingface.co/google/gemma-3-1b-pt](https://huggingface.co/google/gemma-3-1b-pt)
 2. Create an access token at [huggingface.co/settings/tokens](https://huggingface.co/settings/tokens)
 3. Run `huggingface-cli login` and paste your token when prompted
 
@@ -230,6 +233,30 @@ The Gradio UI (`frontend/app.py`) supports:
 ```bash
 python -m frontend.app
 ```
+
+---
+
+## Google Colab
+
+The project runs on Google Colab via the **Google Colab** VS Code extension or directly at [colab.research.google.com](https://colab.research.google.com).
+
+Open `notebooks/colab_runner.ipynb` and run the cells in order:
+
+| Cell | What it does |
+|------|-------------|
+| 1 | Mounts Google Drive — weights and checkpoints are saved here and survive runtime restarts |
+| 2 | Clones the repo on first run, `git pull` on subsequent runs, clears `__pycache__` |
+| 3 | Installs dependencies |
+| 4 | HuggingFace login (Gemma3 only — skip for GPT-2) |
+| 5 | Trains the model (edit flags as needed) |
+| 6 | Optional LoRA fine-tuning on Gemma3-1B |
+| 7 | Plots training diagnostics and saves the figure |
+
+**Workflow:** edit code locally in VS Code → `git push` → re-run Cell 2 in Colab to pull latest → train.
+
+**Persistence:** all weights, checkpoints, and HuggingFace model cache are saved to `MyDrive/llmFromScratch/` automatically — no manual copying needed.
+
+> **Important:** always push your latest code to GitHub before running Colab. The runtime clones directly from GitHub; local files are not accessible there.
 
 ---
 
