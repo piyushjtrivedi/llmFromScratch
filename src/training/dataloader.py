@@ -28,8 +28,11 @@ class GPTDatasetV1(Dataset):
         return self.input_ids[idx], self.target_ids[idx]
     
 
+# TODO: GPTDataSetChunkNLoaderV1 is unused by the current instruction fine-tuning
+# pipeline (which uses InstructionDataset + InstructionCollator instead). Retain
+# for raw pre-training use cases or remove if that path is never needed.
 class GPTDataSetChunkNLoaderV1(DataLoader):
-    def __init__(self, txt, batch_size=4, max_length=256, 
+    def __init__(self, txt, batch_size=4, max_length=256,
                             stride=128, shuffle=True, drop_last=True,
                             num_workers=0):
         

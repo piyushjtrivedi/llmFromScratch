@@ -44,7 +44,8 @@ class LoRALinear(nn.Module):
     def forward(self, x):
         out = self.linear(x)
         if self._lora_enabled:
-            out = out + (x @ self.lora_A.T @ self.lora_B.T) * self.scaling
+            lora_out = (x @ self.lora_A.T) @ self.lora_B.T
+            out = out + lora_out * self.scaling
         return out
 
 

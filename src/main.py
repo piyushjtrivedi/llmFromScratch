@@ -38,7 +38,7 @@ def main():
                         help="Override the model config max sequence length")
     parser.add_argument("--grad-accum", type=int, default=None,
                         help="Override the model config gradient accumulation steps")
-    parser.add_argument("--epochs", type=int, default=10)
+    parser.add_argument("--epochs", type=int, default=5)
     parser.add_argument("--lr", type=float, default=0.0004,
                         help="Peak learning rate (default: 0.0004)")
     parser.add_argument("--warmup-steps", type=int, default=100,
@@ -235,6 +235,13 @@ def main():
             "gradient_accumulation_steps": gradient_accumulation_steps,
             "learning_rate": args.lr,
             "execution_time_minutes": round(execution_time_minutes, 2),
+            "tokens_per_sec": round(trainer_instance.tokens_seen / (execution_time_minutes * 60), 1),
+            "grad_clip_norm": 0.5,
+            "step_times_sec": trainer_instance.step_times_sec,
+            "gpu_memory_total_gb": (
+                torch.cuda.get_device_properties(device).total_memory / 1e9
+                if device.type == "cuda" else None
+            ),
         },
         args.model,
     )

@@ -1,5 +1,6 @@
 import torch
 import logging
+import time
 
 from src.training.loss import LossCalibrator
 from src.models.registry import save_weights
@@ -19,6 +20,8 @@ class ModelTrainer:
         self.tokens_seen, self.global_step = 0, -1
         # Tracks the best validation loss seen so far for best-model checkpointing
         self._best_val_loss = float("inf")
+        self.step_times_sec = []
+        self._step_start_time = None 
 
     def __call__(self, model, train_loader, val_loader, optimizer, device, num_epochs,
                        eval_freq, eval_iter, start_context, tokenizer,
@@ -57,6 +60,11 @@ class ModelTrainer:
                     # for callers that don't pass a scheduler.
                     if scheduler is not None:
                         scheduler.step()
+
+                    if self._step_start_time is not None:
+                        self.step_times_sec.append(time.time() - self._step_start_time)
+                    self._step_start_time = time.time()  # always reset, even on the first step
+                        
                     optimizer.zero_grad(set_to_none=True) # Reset loss gradients from previous batch iteration (set_to_none frees memory immediately)
                     # Free MPS/CUDA cache after each weight update to avoid fragmentation
                     if device.type == "mps":

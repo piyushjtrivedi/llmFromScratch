@@ -229,6 +229,37 @@ During training, whenever validation loss improves, weights are saved to `data/f
 
 `torch.mps.empty_cache()` is called after each optimizer step and after each epoch to return fragmented memory to the OS pool. This prevents the progressive memory fragmentation that can cause OOM errors on Apple Silicon during long training runs.
 
+### Step Timing
+
+`ModelTrainer` records the wall-clock duration of every optimizer step in `self.step_times_sec`. The first step initialises the timer; each subsequent step appends the elapsed time since the previous update. After training, `main.py` saves this array alongside the other metrics and computes an aggregate `tokens_per_sec` figure for the run summary.
+
+### Training Diagnostics Dashboard
+
+`src/utils/plotting.py` reads the saved metrics JSON and renders a **2×3 figure** with six panels. Each panel includes a self-diagnosing annotation that detects common problems and suggests a concrete fix:
+
+| Position | Panel | Diagnostic check |
+|---|---|---|
+| Top-left | Train / Val Loss | Warns if overfitting gap widens or val loss plateaus |
+| Top-centre | Overfitting Gap (Val − Train) | Flags if late gap > 1.5× early gap |
+| Top-right | Learning Rate Schedule | Warns if LR barely changed (scheduler not stepping) |
+| Bottom-left | Gradient Norm (pre-clip) | Warns if clipped on >80% or >30% of steps |
+| Bottom-centre | Peak Memory | Shows GPU utilisation %; warns if under 40% |
+| Bottom-right | Step Throughput | Per-step time series or tok/s summary card; warns if < 200 tok/s |
+
+A run-summary subtitle (effective batch, peak LR, epochs, training time, tok/s) is rendered under the figure title. Panels where data is absent show a "No data" placeholder — backward compatible with metric JSONs saved before new keys were added.
+
+**Metrics saved per run:**
+
+| Key | Source | Type |
+|-----|--------|------|
+| `train_losses`, `val_losses` | eval loop | list per eval step |
+| `tokens_seen` | training loop | list per eval step |
+| `learning_rates`, `grad_norms`, `peak_memory_gb` | eval loop | list per eval step |
+| `step_times_sec` | optimizer step | list per optimizer step |
+| `tokens_per_sec` | post-training | scalar (run average) |
+| `grad_clip_norm` | constant | scalar (0.5) |
+| `gpu_memory_total_gb` | device query | scalar or None (MPS/CPU) |
+
 ---
 
 ## Configuration
@@ -272,6 +303,12 @@ where `A ∈ R^{r × d_in}` and `B ∈ R^{d_out × r}` are the trainable adapter
 | `disable_lora(model)` | Disables the LoRA delta so the model behaves as the frozen base checkpoint — useful for comparing base vs adapted behaviour at inference. |
 
 `LoRALinear` is a drop-in replacement for `nn.Linear` that holds the original frozen weight alongside the trainable `lora_A` and `lora_B` parameters. It respects the base layer's dtype, so bfloat16 Gemma3 models get bfloat16 adapters automatically.
+
+The adapter forward pass splits the chained matmul into two steps to avoid numerical overflow in bfloat16:
+```python
+lora_out = (x @ lora_A.T) @ lora_B.T   # two steps, not x @ lora_A.T @ lora_B.T
+out = out + lora_out * scaling
+```
 
 ### Target Modules
 

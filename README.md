@@ -30,7 +30,7 @@ A hands-on implementation of transformer-based language models built from the gr
 - **Pretrained weight loading** — GPT-2 weights from OpenAI; Gemma3 weights from HuggingFace Hub with local disk caching (downloaded once, reused every run)
 - **LoRA adaptation** — parameter-efficient fine-tuning via low-rank adapter matrices; toggled with a single CLI flag
 - **Instruction fine-tuning** — Alpaca-style dataset pipeline with padding, target masking, and a custom collator
-- **Training diagnostics** — 2×2 plot: loss curves, learning rate schedule, peak memory usage, and gradient norm
+- **Training diagnostics** — 2×3 diagnostic dashboard: loss, overfitting gap, LR schedule, gradient norm, memory usage, and step throughput — with self-diagnosing warnings on each panel
 - **LR scheduling** — linear warmup followed by cosine decay; configurable via CLI
 - **Best-model checkpointing** — weights saved automatically whenever validation loss improves
 - **Device-aware** — automatic detection of CUDA, Apple Silicon (MPS), and CPU; MPS memory cache flushed after each optimizer step
@@ -85,7 +85,7 @@ llmFromScratch/
 │   └── utils/
 │       ├── config.py                  # Hyperparameter configs for all models
 │       ├── lora.py                    # LoRA — apply_lora, enable_lora, disable_lora
-│       ├── plotting.py                # 2×2 training diagnostics figure
+│       ├── plotting.py                # 2×3 training diagnostics dashboard
 │       ├── tokenizer_adapter.py       # HFTokenizerAdapter — tiktoken-compatible wrapper
 │       ├── model_inference.py         # InferenceEngine
 │       ├── gpt_download.py            # GPT-2 checkpoint downloader
@@ -182,16 +182,20 @@ Opens a Gradio UI at `http://127.0.0.1:7860`.
 
 ## Training Diagnostics
 
-After each training run, a metrics JSON is saved alongside the weights. The `plot_loss_curves` utility in `src/utils/plotting.py` reads this file and produces a 2×2 diagnostic figure:
+After each training run, a metrics JSON is saved alongside the weights. The `plot_loss_curves` utility in `src/utils/plotting.py` reads this file and produces a **2×3 dashboard** with self-diagnosing warning annotations on each panel:
 
-| Panel | What it shows |
-|---|---|
-| **Train / Val Loss** | Cross-entropy loss vs tokens seen |
-| **Learning Rate** | Warmup ramp + cosine decay curve |
-| **Peak Memory (GB)** | GPU/MPS memory usage at each eval step |
-| **Gradient Norm** | Pre-clip L2 norm with clip ceiling marked |
+| Position | Panel | What it shows |
+|---|---|---|
+| Top-left | **Train / Val Loss** | Loss curves with epoch boundary markers |
+| Top-centre | **Overfitting Gap** | Val − Train loss gap; shaded when positive; warns if widening late |
+| Top-right | **Learning Rate** | Warmup ramp + cosine decay; warns if schedule didn't fire |
+| Bottom-left | **Gradient Norm** | Pre-clip L2 norm with clip-ceiling line and shaded clipped region |
+| Bottom-centre | **Peak Memory** | GPU/MPS memory per eval step; shows GPU utilisation % on CUDA |
+| Bottom-right | **Step Throughput** | Per-step time series (or tok/s summary card if step times unavailable) |
 
-The gradient norm panel makes it immediately obvious whether clipping is always active (norm == 0.5 throughout indicates the LR or initialisation may need tuning).
+Each panel flags actionable problems automatically — constant clipping, widening overfitting gap, GPU under-utilisation, and low throughput — with a suggested fix inline.
+
+The run summary (effective batch size, peak LR, epoch count, training time, tok/s) is displayed as a subtitle under the figure title.
 
 ---
 
@@ -318,7 +322,7 @@ And one entry to `src/utils/config.py`:
 - [x] LR warmup + cosine decay scheduler
 - [x] Best-model checkpointing during training
 - [x] LoRA parameter-efficient fine-tuning
-- [x] Training diagnostic plots (loss, LR, memory, grad norm)
+- [x] Training diagnostic dashboard — 2×3 plots with self-diagnosing warnings
 - [x] HuggingFace weights loader with disk caching
 - [ ] Evaluation metrics (BLEU, ROUGE)
 - [ ] HuggingFace Spaces deployment
