@@ -52,6 +52,8 @@ def main():
                         help="LoRA rank r (default: 8)")
     parser.add_argument("--lora-alpha", type=float, default=16.0,
                         help="LoRA alpha scaling factor (default: 16.0)")
+    parser.add_argument("--grad-clip", type=float, default=0.5,
+                        help="Max gradient L2 norm for clipping (default: 0.5)")
     parser.add_argument("--eval-freq", type=int, default=20,
                         help="Evaluate every N optimizer steps (default: 20). "
                              "Low values (e.g. 5) make eval dominate runtime.")
@@ -221,6 +223,7 @@ def main():
         scheduler=scheduler,
         model_name=args.model,
         lora=args.lora,
+        grad_clip=args.grad_clip,
     )
     execution_time_minutes = (time.time() - start_time) / 60
     logger.info(f"Training completed in {execution_time_minutes:.2f} minutes.")
@@ -244,9 +247,11 @@ def main():
             "batch_size": batch_size,
             "gradient_accumulation_steps": gradient_accumulation_steps,
             "learning_rate": args.lr,
+            "lora_rank":  args.lora_rank  if args.lora else None,
+            "lora_alpha": args.lora_alpha if args.lora else None,
             "execution_time_minutes": round(execution_time_minutes, 2),
             "tokens_per_sec": round(trainer_instance.tokens_seen / (execution_time_minutes * 60), 1),
-            "grad_clip_norm": 0.5,
+            "grad_clip_norm": args.grad_clip,
             "step_times_sec": trainer_instance.step_times_sec,
             "gpu_memory_total_gb": (
                 torch.cuda.get_device_properties(device).total_memory / 1e9

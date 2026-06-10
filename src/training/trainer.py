@@ -26,7 +26,7 @@ class ModelTrainer:
     def __call__(self, model, train_loader, val_loader, optimizer, device, num_epochs,
                        eval_freq, eval_iter, start_context, tokenizer,
                        gradient_accumulation_steps=1, scheduler=None, model_name=None,
-                       lora: bool = False):
+                       lora: bool = False, grad_clip: float = 0.5):
 
         self._reset_state()
 
@@ -52,7 +52,7 @@ class ModelTrainer:
                     # clip_grad_norm_ returns the pre-clip norm, which we record at eval
                     # steps to diagnose instability (persistent norm == max_norm means
                     # clipping is always active and lr/init may need tuning).
-                    grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=0.5)
+                    grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=grad_clip)
                     optimizer.step() # Update model weights using loss gradients
                     # Advance the LR schedule by one step after each weight update.
                     # Called per optimizer step (not per epoch) so warmup and decay

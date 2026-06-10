@@ -137,8 +137,6 @@ GPT-2 uses `tiktoken`; Gemma3 uses a HuggingFace `AutoTokenizer`. Rather than br
 
 ### Gemma3-1B
 
-> **Status:** Architecture and weights loader are implemented and code-complete. End-to-end training has not yet been verified on hardware — treat as unvalidated until a test run is confirmed.
-
 Matches the `google/gemma-3-1b-pt` architecture exactly so pretrained HuggingFace weights transfer without reshaping.
 
 | Component | Implementation |
@@ -201,7 +199,7 @@ All values can be overridden via `--batch-size` and `--grad-accum` CLI flags wit
 
 ### Gradient Clipping
 
-The L2 norm of all parameter gradients is clipped to `max_norm=0.5` before each optimizer step. If the combined gradient vector exceeds this norm, every gradient is scaled down proportionally. This prevents unstable large updates from a single bad batch — especially important when loading pretrained weights and fine-tuning on a new distribution.
+The L2 norm of all parameter gradients is clipped before each optimizer step via `--grad-clip` (default `0.5`). If the combined gradient vector exceeds this norm, every gradient is scaled down proportionally. This prevents unstable large updates from a single bad batch — especially important when loading pretrained weights and fine-tuning on a new distribution. The actual clip value is saved to the metrics JSON as `grad_clip_norm` so the gradient norm panel in the diagnostic dashboard can draw the correct clip-ceiling line.
 
 ### Optimizer
 
@@ -246,7 +244,7 @@ During training, whenever validation loss improves, weights are saved to `data/f
 | Bottom-centre | Peak Memory | Shows GPU utilisation %; warns if under 40% |
 | Bottom-right | Step Throughput | Per-step time series or tok/s summary card; warns if < 200 tok/s |
 
-A run-summary subtitle (effective batch, peak LR, epochs, training time, tok/s) is rendered under the figure title. Panels where data is absent show a "No data" placeholder — backward compatible with metric JSONs saved before new keys were added.
+A run-summary subtitle (effective batch, peak LR, epochs, LoRA r/α when applicable, training time, tok/s) is rendered under the figure title. Panels where data is absent show a "No data" placeholder — backward compatible with metric JSONs saved before new keys were added. Spike filtering on the step-time panel removes epoch-boundary outliers (sample generation time) automatically before computing the mean line.
 
 **Metrics saved per run:**
 
@@ -257,8 +255,10 @@ A run-summary subtitle (effective batch, peak LR, epochs, training time, tok/s) 
 | `learning_rates`, `grad_norms`, `peak_memory_gb` | eval loop | list per eval step |
 | `step_times_sec` | optimizer step | list per optimizer step |
 | `tokens_per_sec` | post-training | scalar (run average) |
-| `grad_clip_norm` | constant | scalar (0.5) |
+| `grad_clip_norm` | `--grad-clip` arg | scalar (default 0.5) |
 | `gpu_memory_total_gb` | device query | scalar or None (MPS/CPU) |
+| `lora_rank` | `--lora-rank` arg | scalar or None (non-LoRA runs) |
+| `lora_alpha` | `--lora-alpha` arg | scalar or None (non-LoRA runs) |
 
 ---
 
@@ -336,6 +336,16 @@ python -m src.main --model gemma3-1b --lora --lora-rank 16 --lora-alpha 32
 | `--lora` | off | Enable LoRA (flag, no value needed) |
 | `--lora-rank` | 8 | Adapter rank `r`. Higher = more capacity, more parameters. |
 | `--lora-alpha` | 16.0 | Scaling factor. Effective scale = `alpha / r`. |
+
+### Checkpoint Format
+
+LoRA saves only the trainable adapter parameters (`lora_A`, `lora_B` matrices) — not the frozen base weights. This reduces `_lora.pth` size from ~full model size (e.g. 2.6 GB for Gemma3-1B) to tens of MB.
+
+A `_lora_config.json` sidecar is written alongside the checkpoint containing `{"r": ..., "alpha": ..., "target_modules": [...]}`. At inference, `InferenceEngine` reads this sidecar to reconstruct the exact adapter structure before loading the weights.
+
+Backward compatibility is maintained: existing full-state-dict `_lora.pth` files (saved before this change) are detected automatically at load time (`strict=True` path) and remain loadable without migration.
+
+If `lora_rank`/`lora_alpha` are absent from a metrics JSON, `load_metrics` merges them from the config sidecar at load time — so plots show the correct values even for runs that predate the metrics-key addition.
 
 ---
 

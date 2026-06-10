@@ -53,6 +53,8 @@ def plot_loss_curves(metrics: dict):
     grad_accum         = metrics.get("gradient_accumulation_steps")
     peak_lr            = metrics.get("learning_rate")
     exec_time          = metrics.get("execution_time_minutes")
+    lora_rank          = metrics.get("lora_rank")
+    lora_alpha         = metrics.get("lora_alpha")
 
     # ── Derived observations ─────────────────────────────────────────────────
     gap_series = [v - t for t, v in zip(train_losses, val_losses)]
@@ -113,6 +115,9 @@ def plot_loss_curves(metrics: dict):
         parts.append(f"lr = {peak_lr:.0e}")
     if num_epochs:
         parts.append(f"{num_epochs} epochs")
+    if lora_rank is not None:
+        alpha_str = f"  α={lora_alpha:.0f}" if lora_alpha is not None else ""
+        parts.append(f"LoRA r={lora_rank}{alpha_str}")
     if exec_time:
         parts.append(f"{exec_time:.1f} min")
     if tokens_per_sec:
@@ -396,6 +401,11 @@ def plot_comparison_table(metrics_by_model: dict) -> plt.Figure:
         if m0.get("num_epochs"):       parts.append(f"ep={m0['num_epochs']}")
         if m0.get("gradient_accumulation_steps") and m0["gradient_accumulation_steps"] > 1:
             parts.append(f"grad_accum={m0['gradient_accumulation_steps']}")
+    lora_m = next((v["lora"] for v in metrics_by_model.values()
+                   if v.get("lora") and v["lora"].get("lora_rank") is not None), None)
+    if lora_m:
+        alpha_str = f"  α={lora_m['lora_alpha']:.0f}" if lora_m.get("lora_alpha") is not None else ""
+        parts.append(f"LoRA r={lora_m['lora_rank']}{alpha_str}")
     subtitle = "  ".join(parts)
 
     fig.text(0.5, 0.97, "LoRA vs Full Fine-tuning — Master Comparison",
@@ -522,6 +532,23 @@ def plot_comparison(metrics_by_model: dict) -> plt.Figure:
     fig.patch.set_facecolor(BG)
     fig.suptitle("Model Comparison — LoRA vs Full Fine-tune",
                  fontsize=14, color="white", y=0.99)
+
+    # Build a subtitle from the first available metrics (shared config)
+    _sub_parts = []
+    _any_m = next((v[k] for v in metrics_by_model.values()
+                   for k in ("full", "lora") if v.get(k)), None)
+    if _any_m:
+        if _any_m.get("learning_rate"):  _sub_parts.append(f"lr={_any_m['learning_rate']:.0e}")
+        if _any_m.get("num_epochs"):     _sub_parts.append(f"ep={_any_m['num_epochs']}")
+        if _any_m.get("batch_size"):     _sub_parts.append(f"bs={_any_m['batch_size']}")
+    _lora_m = next((v["lora"] for v in metrics_by_model.values()
+                    if v.get("lora") and v["lora"].get("lora_rank") is not None), None)
+    if _lora_m:
+        _alpha_str = f"  α={_lora_m['lora_alpha']:.0f}" if _lora_m.get("lora_alpha") is not None else ""
+        _sub_parts.append(f"LoRA r={_lora_m['lora_rank']}{_alpha_str}")
+    if _sub_parts:
+        fig.text(0.5, 0.965, "  ·  ".join(_sub_parts),
+                 ha="center", va="top", fontsize=9, color="#9ca3af", fontfamily="monospace")
 
     gs = fig.add_gridspec(n + 1, 2,
                           height_ratios=[1.0] * n + [0.80 + 0.15 * n],

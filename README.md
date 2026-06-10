@@ -34,7 +34,8 @@ A hands-on implementation of transformer-based language models built from the gr
 - **LR scheduling** — linear warmup followed by cosine decay; configurable via CLI
 - **Best-model checkpointing** — weights saved automatically whenever validation loss improves
 - **Device-aware** — automatic detection of CUDA, Apple Silicon (MPS), and CPU; MPS memory cache flushed after each optimizer step
-- **Gradio frontend** — local web UI with model selector, temperature, and top-k controls
+- **Gradio frontend** — multi-tab web UI: Generate (chat), Compare Models (LoRA vs Full comparison table and per-model loss curves), Loss Curves (per-checkpoint diagnostic dashboard)
+- **LoRA checkpoint efficiency** — adapter-only saves (`_lora.pth` stores only adapter matrices, not the full model); config sidecar (`_lora_config.json`) records rank, alpha, and target modules for exact reproduction
 - **Modular registry** — adding a new model family requires changes to exactly two files
 
 ---
@@ -47,9 +48,7 @@ A hands-on implementation of transformer-based language models built from the gr
 | GPT-2 Medium | 355M | OpenAI (auto-downloaded) | ✅ Tested — full fine-tuning + LoRA |
 | GPT-2 Large | 774M | OpenAI (auto-downloaded) | ✅ Tested — full fine-tuning + LoRA |
 | GPT-2 XL | 1558M | OpenAI (auto-downloaded) | ✅ Inference only on 16 GB MPS (OOM during training) |
-| Gemma3-1B | 1B | HuggingFace Hub (gated) | ⚠️ Implemented, not yet tested end-to-end |
-
-> **Gemma3-1B note:** The architecture, weights loader, and key mapping are implemented and code-complete. End-to-end training has not yet been verified — treat results as unvalidated until a test run is confirmed.
+| Gemma3-1B | 1B | HuggingFace Hub (gated) | ✅ Tested — full fine-tuning + LoRA |
 
 ---
 
@@ -169,6 +168,9 @@ Fine-tuned weights are saved to `data/fine_tuned_weights/<model-name>.pth`. The 
 | `--lora` | off | Enable LoRA fine-tuning |
 | `--lora-rank` | `8` | LoRA rank `r` |
 | `--lora-alpha` | `16.0` | LoRA scaling factor |
+| `--grad-clip` | `0.5` | Max gradient L2 norm for clipping |
+| `--eval-freq` | `20` | Evaluate every N optimizer steps |
+| `--eval-iter` | `30` | Batches used per evaluation |
 
 ### Run the frontend
 
@@ -195,7 +197,7 @@ After each training run, a metrics JSON is saved alongside the weights. The `plo
 
 Each panel flags actionable problems automatically — constant clipping, widening overfitting gap, GPU under-utilisation, and low throughput — with a suggested fix inline.
 
-The run summary (effective batch size, peak LR, epoch count, training time, tok/s) is displayed as a subtitle under the figure title.
+The run summary (effective batch size, peak LR, epoch count, LoRA r/α when applicable, training time, tok/s) is displayed as a subtitle under the figure title. Spike filtering removes timing outliers (epoch-boundary sample generation) from the step-time panel automatically.
 
 ---
 
@@ -213,6 +215,8 @@ python -m src.main --model gemma3-1b --lora --lora-rank 16 --lora-alpha 32
 
 **Memory benefit:** AdamW allocates moment buffers only for trainable parameters. With LoRA active on a 1B parameter model, optimizer state drops from ~8 GB to a few MB. Combined with gradient accumulation this makes Gemma3-1B trainable on 16 GB MPS.
 
+**Adapter-only checkpoints:** `_lora.pth` stores only the trained adapter matrices (tens of MB), not the frozen base weights. A `_lora_config.json` sidecar records rank, alpha, and target modules so the adapter can be re-applied exactly at inference. Old full-state-dict checkpoints are still loadable without migration.
+
 **Default target layers:** `W_query` and `W_value` in every attention block (works identically for GPT-2 and Gemma3 — both use the same attribute names).
 
 To compare base vs adapted outputs at inference without reloading weights:
@@ -227,12 +231,21 @@ enable_lora(model)    # adapter delta re-applied
 
 ## Frontend Demo
 
-The Gradio UI (`frontend/app.py`) supports:
+The Gradio UI (`frontend/app.py`) has three tabs:
 
-- Model selection from all trained/available checkpoints
-- Adjustable max token length (50–512)
-- Adjustable temperature (0.1–1.5)
+**Generate** — chat with any trained checkpoint
+- Model selector (auto-discovers all available full and LoRA checkpoints)
+- Adjustable max token length (50–512) and temperature (0.1–1.5)
 - Automatic fallback to pretrained weights if no fine-tuned checkpoint exists
+- Input format: plain instruction text — the Alpaca prompt wrapper is added automatically
+
+**Compare Models** — LoRA vs Full comparison across all trained models
+- `All` view: master comparison table (Best Val↓, Perplexity↓, Best Step, Time, Tok/s, Peak Mem, GPU Util) with winner cells highlighted
+- Per-model view: side-by-side LoRA vs Full loss curves + per-model comparison table with the same metrics
+- Subtitles show shared training config (lr, epochs, bs) and LoRA rank/α when applicable
+- Rendered automatically on page load — no button click required
+
+**Loss Curves** — 2×3 diagnostic dashboard per checkpoint (see [Training Diagnostics](#training-diagnostics))
 
 ```bash
 python -m frontend.app
@@ -316,7 +329,7 @@ And one entry to `src/utils/config.py`:
 - [x] Pretrained weight loading — GPT-2 (OpenAI) and Gemma3-1B (HuggingFace Hub)
 - [x] Instruction fine-tuning pipeline (Alpaca format)
 - [x] Multi-model registry
-- [x] Gradio multi-model frontend
+- [x] Gradio multi-model frontend — Generate, Compare Models (LoRA vs Full), and Loss Curves tabs
 - [x] Apple Silicon (MPS) support with memory management
 - [x] Gradient accumulation, clipping, and AdamW tuning
 - [x] LR warmup + cosine decay scheduler

@@ -100,7 +100,13 @@ def load_metrics(model_name: str, save_dir: str = None,
     if not os.path.exists(metrics_path):
         return None
     with open(metrics_path, "r", encoding="utf-8") as f:
-        return json.load(f)
+        m = json.load(f)
+    if lora and m.get("lora_rank") is None:
+        cfg = load_lora_config(model_name, save_dir)
+        if cfg:
+            m["lora_rank"]  = cfg["r"]
+            m["lora_alpha"] = cfg["alpha"]
+    return m
 
 
 # ── LoRA config sidecar ──────────────────────────────────────────────────────
