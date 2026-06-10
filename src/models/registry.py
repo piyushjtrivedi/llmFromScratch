@@ -65,7 +65,12 @@ def save_weights(model, model_name: str, save_dir: str = None,
                  lora: bool = False) -> str:
     save_path = get_finetuned_weights_path(model_name, save_dir, lora=lora)
     os.makedirs(os.path.dirname(save_path), exist_ok=True)
-    torch.save(model.state_dict(), save_path)
+    if lora:
+        # Save only the trainable adapter params — much smaller than the full model.
+        state_dict = {k: v for k, v in model.state_dict().items() if "lora_" in k}
+    else:
+        state_dict = model.state_dict()
+    torch.save(state_dict, save_path)
     logger.info(f"[Registry] Fine-tuned weights saved to {save_path}")
     return save_path
 

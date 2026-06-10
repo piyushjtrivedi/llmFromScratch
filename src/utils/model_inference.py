@@ -18,33 +18,37 @@ class InferenceEngine:
         self.model = get_model(model_name, Model_Configs[model_name])
 
         if weights_path:
-            # If the checkpoint was saved with LoRA, apply the adapters first so
-            # the model's parameter names match the keys in the saved state dict.
             if "_lora" in weights_path:
+                # Always start from pretrained base weights — the checkpoint only
+                # contains adapter deltas (new format) or full state (old format).
+                get_weights_loader(model_name)(self.model)
+
+                sd = torch.load(weights_path, map_location=self.device, weights_only=True)
+
                 lora_cfg = load_lora_config(model_name)
                 if lora_cfg is None:
-                    # No sidecar — checkpoint predates save_lora_config.
-                    # Infer r from the first lora_A tensor in the state dict
-                    # (shape: r × in_features). Default alpha = r so scaling = 1.0.
-                    sd = torch.load(weights_path, map_location="cpu", weights_only=True)
                     lora_a_keys = [k for k in sd if k.endswith(".lora_A")]
                     r = sd[lora_a_keys[0]].shape[0] if lora_a_keys else 8
                     lora_cfg = {"r": r, "alpha": 16.0,
                                 "target_modules": list(_DEFAULT_TARGET_MODULES)}
                     logger.warning(
-                        f"[InferenceEngine] No lora_config.json found — "
-                        f"using defaults r={r}, alpha=16.0. "
-                        "Re-run training to save a config sidecar for exact reproduction."
+                        f"[InferenceEngine] No lora_config.json — inferred r={r}, alpha=16.0"
                     )
+
                 apply_lora(self.model, r=lora_cfg["r"], alpha=lora_cfg["alpha"],
                            target_modules=tuple(lora_cfg["target_modules"]))
                 logger.info(f"[InferenceEngine] Applied LoRA r={lora_cfg['r']} alpha={lora_cfg['alpha']}")
-            self.model.load_state_dict(torch.load(weights_path, map_location=self.device,
-                                                   weights_only=True))
+
+                # New format: adapter-only keys (strict=False keeps pretrained base).
+                # Old format: full state dict — strict=True overwrites base weights too.
+                adapter_only = all("lora_" in k for k in sd)
+                self.model.load_state_dict(sd, strict=not adapter_only)
+            else:
+                self.model.load_state_dict(torch.load(weights_path, map_location=self.device,
+                                                       weights_only=True))
             logger.info(f"[InferenceEngine] Loaded fine-tuned weights from {weights_path}")
         else:
-            weights_loader = get_weights_loader(model_name)
-            weights_loader(self.model)
+            get_weights_loader(model_name)(self.model)
             logger.info(f"[InferenceEngine] Loaded pretrained weights for {model_name}")
 
         self.model.to(self.device)
