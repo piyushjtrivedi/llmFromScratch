@@ -42,9 +42,11 @@ def _sanitize(model_name: str) -> str:
     return model_name.replace(" ", "_").replace("(", "").replace(")", "")
 
 
-def get_finetuned_weights_path(model_name: str, save_dir: str = None) -> str:
+def get_finetuned_weights_path(model_name: str, save_dir: str = None,
+                               lora: bool = False) -> str:
     save_dir = save_dir or _finetuned_dir()
-    return os.path.join(save_dir, f"{_sanitize(model_name)}.pth")
+    suffix = "_lora" if lora else ""
+    return os.path.join(save_dir, f"{_sanitize(model_name)}{suffix}.pth")
 
 
 def get_model(model_name: str, cfg: dict):
@@ -59,8 +61,9 @@ def get_weights_loader(model_name: str):
     return _LOADERS[model_name]()
 
 
-def save_weights(model, model_name: str, save_dir: str = None) -> str:
-    save_path = get_finetuned_weights_path(model_name, save_dir)
+def save_weights(model, model_name: str, save_dir: str = None,
+                 lora: bool = False) -> str:
+    save_path = get_finetuned_weights_path(model_name, save_dir, lora=lora)
     os.makedirs(os.path.dirname(save_path), exist_ok=True)
     torch.save(model.state_dict(), save_path)
     logger.info(f"[Registry] Fine-tuned weights saved to {save_path}")
@@ -69,13 +72,16 @@ def save_weights(model, model_name: str, save_dir: str = None) -> str:
 
 # ── Metrics (loss curves) ────────────────────────────────────────────────────
 
-def get_metrics_path(model_name: str, save_dir: str = None) -> str:
+def get_metrics_path(model_name: str, save_dir: str = None,
+                     lora: bool = False) -> str:
     save_dir = save_dir or _finetuned_dir()
-    return os.path.join(save_dir, f"{_sanitize(model_name)}_metrics.json")
+    suffix = "_lora" if lora else ""
+    return os.path.join(save_dir, f"{_sanitize(model_name)}{suffix}_metrics.json")
 
 
-def save_metrics(metrics: dict, model_name: str, save_dir: str = None) -> str:
-    save_path = get_metrics_path(model_name, save_dir)
+def save_metrics(metrics: dict, model_name: str, save_dir: str = None,
+                 lora: bool = False) -> str:
+    save_path = get_metrics_path(model_name, save_dir, lora=lora)
     os.makedirs(os.path.dirname(save_path), exist_ok=True)
     with open(save_path, "w", encoding="utf-8") as f:
         json.dump(metrics, f, indent=2)
@@ -83,9 +89,60 @@ def save_metrics(metrics: dict, model_name: str, save_dir: str = None) -> str:
     return save_path
 
 
-def load_metrics(model_name: str, save_dir: str = None) -> dict | None:
-    metrics_path = get_metrics_path(model_name, save_dir)
+def load_metrics(model_name: str, save_dir: str = None,
+                 lora: bool = False) -> dict | None:
+    metrics_path = get_metrics_path(model_name, save_dir, lora=lora)
     if not os.path.exists(metrics_path):
         return None
     with open(metrics_path, "r", encoding="utf-8") as f:
         return json.load(f)
+
+
+# ── LoRA config sidecar ──────────────────────────────────────────────────────
+
+def _lora_config_path(model_name: str, save_dir: str = None) -> str:
+    save_dir = save_dir or _finetuned_dir()
+    return os.path.join(save_dir, f"{_sanitize(model_name)}_lora_config.json")
+
+
+def save_lora_config(model_name: str, r: int, alpha: float,
+                     target_modules: list, save_dir: str = None) -> str:
+    save_path = _lora_config_path(model_name, save_dir)
+    os.makedirs(os.path.dirname(save_path), exist_ok=True)
+    with open(save_path, "w", encoding="utf-8") as f:
+        json.dump({"r": r, "alpha": alpha, "target_modules": target_modules}, f)
+    logger.info(f"[Registry] LoRA config saved to {save_path}")
+    return save_path
+
+
+def load_lora_config(model_name: str, save_dir: str = None) -> dict | None:
+    path = _lora_config_path(model_name, save_dir)
+    if not os.path.exists(path):
+        return None
+    with open(path, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+def list_available_checkpoints(save_dir: str = None) -> list[dict]:
+    """
+    Scan the fine-tuned weights directory and return all available checkpoints.
+    Each entry: {"model_name": str, "lora": bool, "display": str}
+    """
+    save_dir = save_dir or _finetuned_dir()
+    if not os.path.isdir(save_dir):
+        return []
+
+    checkpoints = []
+    for model_name in _MODELS:
+        sanitized = _sanitize(model_name)
+        if os.path.exists(os.path.join(save_dir, f"{sanitized}.pth")):
+            checkpoints.append({
+                "model_name": model_name, "lora": False,
+                "display": model_name,
+            })
+        if os.path.exists(os.path.join(save_dir, f"{sanitized}_lora.pth")):
+            checkpoints.append({
+                "model_name": model_name, "lora": True,
+                "display": f"{model_name} [LoRA]",
+            })
+    return checkpoints

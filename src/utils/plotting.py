@@ -257,14 +257,26 @@ def plot_loss_curves(metrics: dict):
     # ── Panel 6 — Throughput ─────────────────────────────────────────────────
     ax = axes[1, 2]
     if step_times:
+        # Filter timing artifacts: epoch-boundary sample-generation time can leak
+        # into the next step's measurement in older metrics (before the trainer fix).
+        # Any value > 3× the median is an isolated spike, not a real slow step.
+        median_t = float(np.median(step_times))
+        threshold = max(median_t * 3, median_t + 2.0)
+        clean_times = [t for t in step_times if t <= threshold]
+        filtered = len(step_times) - len(clean_times)
+
         # step_times_sec has one entry per optimizer step; tokens_seen has one entry
         # per eval point (every eval_freq steps). Using step index as x-axis keeps
         # alignment correct — pairing against tokens_seen would discard ~80% of data.
-        step_indices = list(range(len(step_times)))
-        ax.plot(step_indices, step_times, color="#fbbf24", lw=1.5, alpha=0.9)
-        mean_t = float(np.mean(step_times))
+        step_indices = list(range(len(clean_times)))
+        ax.plot(step_indices, clean_times, color="#fbbf24", lw=1.5, alpha=0.9)
+        mean_t = float(np.mean(clean_times))
         ax.axhline(y=mean_t, color="#fbbf24", lw=1, ls="--",
-                   alpha=0.5, label=f"mean = {mean_t:.1f}s")
+                   alpha=0.5, label=f"mean = {mean_t:.2f}s")
+        if filtered:
+            ax.text(0.97, 0.95, f"{filtered} spike(s) filtered",
+                    transform=ax.transAxes, ha="right", va="top",
+                    color=TICK_COL, fontsize=7)
         _style_ax(ax, "Step Time", xlabel="Optimizer step", ylabel="Seconds / optimizer step")
         ax.legend(fontsize=7, facecolor=GRID_COL, labelcolor="white", framealpha=0.8)
         if low_throughput:
@@ -303,6 +315,369 @@ def plot_loss_curves(metrics: dict):
         _no_data(ax, "Throughput")
 
     plt.tight_layout(rect=[0, 0, 1, 0.94])
+    return fig
+
+
+def plot_comparison_table(metrics_by_model: dict) -> plt.Figure:
+    """
+    Render a styled master comparison table (LoRA vs Full for all models).
+    Matches the screenshot layout: Model | Mode | Best Val | Perplexity |
+    Best Step | Time | Tok/s | Peak Mem | GPU Util
+    """
+    BG       = "#0f1117"
+    HDR_BG   = "#1e3a5f"
+    ROW_A    = "#111827"
+    ROW_B    = "#1a1d27"
+    C_LORA   = "#22d3ee"
+    C_FULL   = "#fb923c"
+    C_GREEN  = "#4ade80"
+    C_AMBER  = "#fbbf24"
+    C_MUTED  = "#9ca3af"
+    WHITE    = "#f9fafb"
+
+    def _short(name: str) -> str:
+        if "(" in name:
+            base, size = name.split("(", 1)
+            base_clean = base.strip().replace('gpt2', 'GPT2').replace('gemma3', 'Gemma3')
+            return f"{base_clean} ({size.rstrip(')')})"
+        return name.replace("gemma3", "Gemma3").replace("gpt2", "GPT2")
+
+    headers   = ["Model", "Mode", "Best Val↓", "Perplexity↓",
+                 "Best Step", "Time", "Tok/s", "Peak Mem", "GPU Util"]
+    col_w     = [0.13, 0.07, 0.10, 0.10, 0.11, 0.08, 0.08, 0.10, 0.09]
+
+    rows, meta = [], []
+    for model_name, variants in metrics_by_model.items():
+        for mode_key, mode_label in [("lora", "LoRA"), ("full", "Full")]:
+            m = variants.get(mode_key)
+            if m and m.get("val_losses"):
+                best_idx  = int(np.argmin(m["val_losses"]))
+                total     = len(m["val_losses"])
+                best_val  = float(min(m["val_losses"]))
+                perp      = float(np.exp(best_val))
+                step_sym  = "✓" if best_idx == total - 1 else "△"
+                mem_list  = m.get("peak_memory_gb") or []
+                peak_mem  = max(mem_list) if mem_list else None
+                gpu_total = m.get("gpu_memory_total_gb")
+                exec_t    = m.get("execution_time_minutes")
+                tps       = m.get("tokens_per_sec")
+
+                rows.append([
+                    _short(model_name),
+                    mode_label,
+                    f"{best_val:.3f}",
+                    f"{perp:.3f}",
+                    f"{best_idx+1}/{total}  {step_sym}",
+                    f"{exec_t:.1f}m" if isinstance(exec_t, (int, float)) else "—",
+                    str(int(tps)) if tps else "—",
+                    f"{peak_mem:.1f} GB" if peak_mem else "—",
+                    f"{peak_mem/gpu_total*100:.0f}%" if (peak_mem and gpu_total) else "—",
+                ])
+                meta.append({"mode": mode_key, "model": model_name,
+                             "best_val": best_val, "step_sym": step_sym})
+            else:
+                rows.append([_short(model_name), mode_label] + ["—"] * 7)
+                meta.append({"mode": mode_key, "model": model_name,
+                             "best_val": None, "step_sym": None})
+
+    n_rows   = len(rows)
+    fig_h    = max(3.5, 1.6 + n_rows * 0.72 + 1.0)
+    fig      = plt.figure(figsize=(16, fig_h))
+    fig.patch.set_facecolor(BG)
+
+    # Build subtitle from shared config keys if they exist
+    all_m    = [v[k] for v in metrics_by_model.values()
+                for k in ("full", "lora") if v.get(k)]
+    parts    = []
+    if all_m:
+        m0 = all_m[0]
+        if m0.get("batch_size"):       parts.append(f"bs={m0['batch_size']}")
+        if m0.get("learning_rate"):    parts.append(f"lr={m0['learning_rate']:.0e}")
+        if m0.get("num_epochs"):       parts.append(f"ep={m0['num_epochs']}")
+        if m0.get("gradient_accumulation_steps") and m0["gradient_accumulation_steps"] > 1:
+            parts.append(f"grad_accum={m0['gradient_accumulation_steps']}")
+    subtitle = "  ".join(parts)
+
+    fig.text(0.5, 0.97, "LoRA vs Full Fine-tuning — Master Comparison",
+             ha="center", va="top", fontsize=13, color=WHITE, fontfamily="monospace")
+    if subtitle:
+        fig.text(0.5, 0.93, subtitle, ha="center", va="top",
+                 fontsize=9, color=C_MUTED, fontfamily="monospace")
+
+    ax = fig.add_subplot(111)
+    ax.set_facecolor(BG)
+    ax.axis("off")
+
+    tbl = ax.table(cellText=rows, colLabels=headers,
+                   colWidths=col_w, loc="upper center", cellLoc="center")
+    tbl.auto_set_font_size(False)
+    tbl.set_fontsize(9)
+    tbl.scale(1, 2.1)
+
+    # ── Header styling ────────────────────────────────────────────────────────
+    for c in range(len(headers)):
+        cell = tbl[(0, c)]
+        cell.set_facecolor(HDR_BG)
+        cell.set_text_props(color=WHITE, fontweight="bold")
+        cell.set_edgecolor("#2d3148")
+
+    # ── Data row styling ──────────────────────────────────────────────────────
+    # Identify which rows belong to the same model for pairwise highlighting
+    model_pairs: dict[str, dict] = {}
+    for r_idx, m in enumerate(meta):
+        mn = m["model"]
+        if mn not in model_pairs:
+            model_pairs[mn] = {}
+        model_pairs[mn][m["mode"]] = r_idx
+
+    better_cells: set[tuple] = set()
+    for mn, pair in model_pairs.items():
+        lora_r = pair.get("lora")
+        full_r = pair.get("full")
+        if lora_r is not None and full_r is not None:
+            lv = meta[lora_r]["best_val"]
+            fv = meta[full_r]["best_val"]
+            if lv is not None and fv is not None:
+                better_r = lora_r if lv < fv else full_r
+                # Mark Best Val (col 2) and Perplexity (col 3) for the better row
+                better_cells.add((better_r + 1, 2))
+                better_cells.add((better_r + 1, 3))
+
+    for r_idx, (row_data, m) in enumerate(zip(rows, meta)):
+        tbl_row = r_idx + 1
+        bg      = ROW_A if r_idx % 2 == 0 else ROW_B
+
+        for c in range(len(headers)):
+            cell = tbl[(tbl_row, c)]
+            cell.set_facecolor(bg)
+            cell.set_text_props(color=WHITE)
+            cell.set_edgecolor("#1f2937")
+
+        # Mode cell — coloured text
+        mode_cell = tbl[(tbl_row, 1)]
+        if m["mode"] == "lora":
+            mode_cell.set_text_props(color=C_LORA, fontweight="bold")
+        else:
+            mode_cell.set_text_props(color=C_FULL, fontweight="bold")
+
+        # Best Step cell — colour by ✓ / △
+        step_cell = tbl[(tbl_row, 4)]
+        if m["step_sym"] == "✓":
+            step_cell.set_text_props(color=C_LORA)
+        elif m["step_sym"] == "△":
+            step_cell.set_text_props(color=C_AMBER)
+
+        # Best Val / Perplexity — highlight the winner
+        for c in (2, 3):
+            if (tbl_row, c) in better_cells:
+                tbl[(tbl_row, c)].set_text_props(color=C_GREEN, fontweight="bold")
+
+    # ── Legend ────────────────────────────────────────────────────────────────
+    legend_y = 0.03
+    legend_items = [
+        ("■", C_LORA,  "LoRA"),
+        ("■", C_FULL,  "Full Fine-tuning"),
+        ("✓", C_LORA,  "still learning — could train longer"),
+        ("△", C_AMBER, "early stopping recommended"),
+        ("●", C_GREEN, "better result"),
+    ]
+    x = 0.04
+    for sym, col, label in legend_items:
+        fig.text(x, legend_y, sym, color=col, fontsize=10, va="bottom")
+        fig.text(x + 0.018, legend_y, label, color=C_MUTED, fontsize=8, va="bottom")
+        x += 0.18
+
+    plt.tight_layout(rect=[0, 0.06, 1, 0.90])
+    return fig
+
+
+def plot_comparison(metrics_by_model: dict) -> plt.Figure:
+    """
+    Side-by-side LoRA vs Full comparison across models.
+
+    Args:
+        metrics_by_model: {
+            "gpt2-small (124M)": {"full": dict_or_None, "lora": dict_or_None},
+            "gemma3-1b":         {"full": dict_or_None, "lora": dict_or_None},
+            ...
+        }
+
+    Layout:
+        One row per model  — left panel = Full, right panel = LoRA loss curves
+        Final row          — master comparison table (all models × variants)
+    """
+    BG        = "#0f1117"
+    PANEL_BG  = "#1a1d27"
+    GRID_COL  = "#2d3148"
+    TICK_COL  = "#9ca3af"
+    C_TRAIN   = "#60a5fa"
+    C_VAL     = "#fb923c"
+    C_WIN_BG   = "#0d2818"   # subtle dark-green tint for winning cell
+    C_WIN_TEXT = "#4ade80"   # bright green text for winning value
+
+    models = list(metrics_by_model.keys())
+    n      = len(models)
+
+    fig = plt.figure(figsize=(16, 4 * n + 3))
+    fig.patch.set_facecolor(BG)
+    fig.suptitle("Model Comparison — LoRA vs Full Fine-tune",
+                 fontsize=14, color="white", y=0.99)
+
+    gs = fig.add_gridspec(n + 1, 2,
+                          height_ratios=[1.0] * n + [0.80 + 0.15 * n],
+                          hspace=0.55, wspace=0.28)
+
+    def _prep_ax(ax, title):
+        ax.set_facecolor(PANEL_BG)
+        ax.tick_params(colors=TICK_COL, labelsize=8)
+        for spine in ax.spines.values():
+            spine.set_color(GRID_COL)
+        ax.grid(True, alpha=0.15, color="#4b5563")
+        ax.set_title(title, color="white", fontsize=9, pad=5)
+        ax.set_xlabel("Tokens seen", color=TICK_COL, fontsize=8)
+        ax.set_ylabel("Loss", color=TICK_COL, fontsize=8)
+
+    def _loss_panel(ax, m, title):
+        if m is None:
+            ax.set_facecolor(PANEL_BG)
+            for spine in ax.spines.values():
+                spine.set_color(GRID_COL)
+            ax.set_title(title, color="white", fontsize=9, pad=5)
+            ax.text(0.5, 0.5, "No data", transform=ax.transAxes,
+                    ha="center", va="center", color="#6b7280", fontsize=11)
+            ax.set_xticks([]); ax.set_yticks([])
+            return
+        _prep_ax(ax, title)
+        ts = m["tokens_seen"]
+        ax.plot(ts, m["train_losses"], color=C_TRAIN, lw=2, label="Train")
+        ax.plot(ts, m["val_losses"],   color=C_VAL,   lw=2, ls="--", label="Val")
+        ax.legend(fontsize=7, facecolor=GRID_COL, labelcolor="white", framealpha=0.7)
+        final_val = m["val_losses"][-1]
+        ax.annotate(f"val={final_val:.3f}", xy=(ts[-1], final_val),
+                    xytext=(-38, 6), textcoords="offset points",
+                    color=C_VAL, fontsize=7)
+
+    # ── Loss curve rows ───────────────────────────────────────────────────────
+    for row, model_name in enumerate(models):
+        variants = metrics_by_model[model_name]
+        short    = model_name.split(" ")[0] if "(" in model_name else model_name
+        _loss_panel(fig.add_subplot(gs[row, 0]), variants.get("full"),
+                    f"{short} — Full fine-tune")
+        _loss_panel(fig.add_subplot(gs[row, 1]), variants.get("lora"),
+                    f"{short} — LoRA")
+
+    # ── Master comparison table ───────────────────────────────────────────────
+    ax_t = fig.add_subplot(gs[n, :])
+    ax_t.set_facecolor(PANEL_BG)
+    ax_t.set_title("Master Comparison", color="white", fontsize=10, pad=6)
+    ax_t.axis("off")
+
+    C_LORA_T  = "#22d3ee"
+    C_FULL_T  = "#fb923c"
+    C_AMBER_T = "#fbbf24"
+
+    headers  = ["Model", "Variant", "Final Val↓", "Best Val↓", "Perplexity↓",
+                "Best Step", "Time", "Tok/s", "Peak Mem", "GPU Util"]
+    col_w_t  = [0.10, 0.08, 0.10, 0.10, 0.10, 0.11, 0.07, 0.07, 0.10, 0.08]
+
+    def _extract(m):
+        if m is None:
+            return ["—"] * 8
+        best_idx  = int(np.argmin(m["val_losses"]))
+        total     = len(m["val_losses"])
+        best_val  = float(min(m["val_losses"]))
+        step_sym  = "✓" if best_idx == total - 1 else "△"
+        mem_list  = m.get("peak_memory_gb") or []
+        peak_mem  = max(mem_list) if mem_list else None
+        gpu_total = m.get("gpu_memory_total_gb")
+        exec_t    = m.get("execution_time_minutes")
+        tps       = m.get("tokens_per_sec")
+        return [
+            f"{m['val_losses'][-1]:.4f}",
+            f"{best_val:.4f}",
+            f"{np.exp(best_val):.3f}",
+            f"{best_idx+1}/{total}  {step_sym}",
+            f"{exec_t:.1f}m" if isinstance(exec_t, (int, float)) else "—",
+            str(int(tps)) if tps else "—",
+            f"{peak_mem:.1f} GB" if peak_mem else "—",
+            f"{peak_mem/gpu_total*100:.0f}%" if (peak_mem and gpu_total) else "—",
+        ]
+
+    def _num(s):
+        try:
+            return float(s.replace(" GB", "").replace("%", "").rstrip("m"))
+        except (ValueError, AttributeError):
+            return None
+
+    rows_data = []
+    for model_name in models:
+        short = model_name.split(" ")[0] if "(" in model_name else model_name
+        v     = metrics_by_model[model_name]
+        rows_data.append([short, "Full"] + _extract(v.get("full")))
+        rows_data.append([short, "LoRA"] + _extract(v.get("lora")))
+
+    tbl = ax_t.table(
+        cellText=rows_data,
+        colLabels=headers,
+        colWidths=col_w_t,
+        loc="upper center",
+        cellLoc="center",
+    )
+    tbl.auto_set_font_size(False)
+    tbl.set_fontsize(8.5)
+    tbl.scale(1, 1.6)
+
+    # Header styling
+    for col in range(len(headers)):
+        cell = tbl[(0, col)]
+        cell.set_facecolor("#1e3a5f")
+        cell.set_text_props(color="white", fontweight="bold")
+        cell.set_edgecolor("#2d3148")
+
+    # col indices: 0=Model 1=Variant 2=FinalVal 3=BestVal 4=Perplexity
+    #              5=BestStep 6=Time 7=Tok/s 8=PeakMem 9=GPUUtil
+    metric_cols  = [2, 3, 4, 6, 7, 8]
+    lower_better = {2, 3, 4, 6, 8}   # losses, perplexity, time, memory
+    higher_better = {7}               # tok/s
+
+    for pair_idx in range(len(models)):
+        full_row = pair_idx * 2 + 1   # 1-indexed (0 = header)
+        lora_row = pair_idx * 2 + 2
+
+        for data_row in (full_row, lora_row):
+            for col in range(len(headers)):
+                cell = tbl[(data_row, col)]
+                cell.set_facecolor("#111827" if data_row % 2 else PANEL_BG)
+                cell.set_text_props(color="white", fontweight="normal")
+                cell.set_edgecolor("#1f2937")
+
+        # Mode cell colour
+        tbl[(full_row, 1)].set_text_props(color=C_FULL_T, fontweight="bold")
+        tbl[(lora_row, 1)].set_text_props(color=C_LORA_T, fontweight="bold")
+
+        # Best Step symbol colour
+        for data_row in (full_row, lora_row):
+            step_val = rows_data[data_row - 1][5]
+            if "✓" in step_val:
+                tbl[(data_row, 5)].set_text_props(color=C_LORA_T)
+            elif "△" in step_val:
+                tbl[(data_row, 5)].set_text_props(color=C_AMBER_T)
+
+        # Win/loss highlighting
+        for col in metric_cols:
+            fval = rows_data[full_row - 1][col]
+            lval = rows_data[lora_row - 1][col]
+            if fval == "—" or lval == "—":
+                continue
+            fv, lv = _num(fval), _num(lval)
+            if fv is None or lv is None:
+                continue
+            f_wins = fv < lv if col in lower_better else fv > lv
+            win_row = full_row if f_wins else lora_row
+            tbl[(win_row, col)].set_facecolor(C_WIN_BG)
+            tbl[(win_row, col)].set_text_props(color=C_WIN_TEXT, fontweight="bold")
+
+    plt.tight_layout(rect=[0, 0, 1, 0.97])
     return fig
 
 

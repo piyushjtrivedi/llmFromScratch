@@ -7,11 +7,14 @@ import json
 import urllib
 import logging
 import argparse
-
 from torch.utils.data import DataLoader
 from torch.optim.lr_scheduler import LinearLR, CosineAnnealingLR, SequentialLR
-from src.models.registry import get_model, get_weights_loader, save_weights, save_metrics
+
+from src.models.registry import (get_model, get_weights_loader, save_weights,
+                                  save_metrics, save_lora_config)
+
 from src.utils.config import Model_Configs
+from src.utils.lora import apply_lora, _DEFAULT_TARGET_MODULES
 
 from src.data.instruction_dataset import InstructionDataset
 from src.data.instruction_collator import InstructionCollator
@@ -49,11 +52,11 @@ def main():
                         help="LoRA rank r (default: 8)")
     parser.add_argument("--lora-alpha", type=float, default=16.0,
                         help="LoRA alpha scaling factor (default: 16.0)")
-    parser.add_argument("--eval-freq", type=int, default=50,
-                        help="Evaluate every N optimizer steps (default: 50). "
+    parser.add_argument("--eval-freq", type=int, default=20,
+                        help="Evaluate every N optimizer steps (default: 20). "
                              "Low values (e.g. 5) make eval dominate runtime.")
-    parser.add_argument("--eval-iter", type=int, default=5,
-                        help="Number of batches used per evaluation (default: 5)")
+    parser.add_argument("--eval-iter", type=int, default=30,
+                        help="Number of batches used per evaluation (default: 30)")
     args = parser.parse_args()
     logger.info(f"[Arguments received]: {args}")
 
@@ -71,8 +74,9 @@ def main():
     # A/B adapter matrices to the target attention projections. When --lora is
     # not passed the model trains all parameters as normal.
     if args.lora:
-        from src.utils.lora import apply_lora
         apply_lora(model, r=args.lora_rank, alpha=args.lora_alpha)
+        save_lora_config(args.model, r=args.lora_rank, alpha=args.lora_alpha,
+                         target_modules=list(_DEFAULT_TARGET_MODULES))
 
     # AdamW with transformer-standard hyperparameters.
     # beta2=0.95 (vs PyTorch default 0.999): the second moment estimate decays faster,
@@ -216,12 +220,13 @@ def main():
         gradient_accumulation_steps=gradient_accumulation_steps,
         scheduler=scheduler,
         model_name=args.model,
+        lora=args.lora,
     )
     execution_time_minutes = (time.time() - start_time) / 60
     logger.info(f"Training completed in {execution_time_minutes:.2f} minutes.")
 
     # Save fine-tuned weights
-    saved_path = save_weights(model, args.model)
+    saved_path = save_weights(model, args.model, lora=args.lora)
     logger.info(f"[Checkpoint] Fine-tuned weights saved to {saved_path}")
 
     # Save training metrics for loss curve visualisation
@@ -249,6 +254,7 @@ def main():
             ),
         },
         args.model,
+        lora=args.lora,
     )
 
     # Sample inference on test entries

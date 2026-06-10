@@ -25,7 +25,8 @@ class ModelTrainer:
 
     def __call__(self, model, train_loader, val_loader, optimizer, device, num_epochs,
                        eval_freq, eval_iter, start_context, tokenizer,
-                       gradient_accumulation_steps=1, scheduler=None, model_name=None):
+                       gradient_accumulation_steps=1, scheduler=None, model_name=None,
+                       lora: bool = False):
 
         self._reset_state()
 
@@ -108,7 +109,7 @@ class ModelTrainer:
                         # the end of training. Skipped if model_name is not provided.
                         if model_name is not None and val_loss < self._best_val_loss:
                             self._best_val_loss = val_loss
-                            save_weights(model, model_name)
+                            save_weights(model, model_name, lora=lora)
                             logger.info(f"[Checkpoint] New best val loss {val_loss:.3f} — weights saved")
 
                     # Reset timer AFTER eval so eval time is excluded from the next step.
@@ -123,6 +124,9 @@ class ModelTrainer:
             ModelTrainer.generate_and_print_sample(
                 model, tokenizer, device, start_context
             )
+            # Reset timer after sample generation so the first step of the next
+            # epoch doesn't absorb text-generation time into its measurement.
+            self._step_start_time = time.time()
 
         return self.train_losses, self.val_losses, self.track_tokens_seen
     

@@ -2,12 +2,15 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import tiktoken
+import os
 
 from src.models.base_model import BaseLanguageModel
 from src.utils.tokenizer_adapter import HFTokenizerAdapter
 from src.models.gemma3.normalization import RMSNorm
 from src.models.gemma3.transformer import TransformerBlock
 from src.models.gemma3.rope_wrapper import RoPE
+
+from src.utils.colab import get_data_dir
 
 
 class GemmaModel(BaseLanguageModel):
@@ -143,8 +146,20 @@ class GemmaModel(BaseLanguageModel):
                 "transformers is required for HuggingFace tokenizers. "
                 "Install with: pip install transformers"
             )
+
+        cache_dir = os.path.join(get_data_dir(), "gemma3_cache")
+
+        # Try local cache first — no network call if tokenizer was already downloaded.
         try:
-            hf_tokenizer = AutoTokenizer.from_pretrained(tokenizer_id)
+            hf_tokenizer = AutoTokenizer.from_pretrained(
+                tokenizer_id, cache_dir=cache_dir, local_files_only=True
+            )
+            return HFTokenizerAdapter(hf_tokenizer)
+        except Exception:
+            pass  # cache miss — fall through to download
+
+        try:
+            hf_tokenizer = AutoTokenizer.from_pretrained(tokenizer_id, cache_dir=cache_dir)
         except Exception as e:
             if "401" in str(e) or "unauthorized" in str(e).lower() or "credentials" in str(e).lower():
                 raise PermissionError(
