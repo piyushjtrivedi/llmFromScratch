@@ -36,6 +36,7 @@ A hands-on implementation of transformer-based language models built from the gr
 - **Device-aware** — automatic detection of CUDA, Apple Silicon (MPS), and CPU; MPS memory cache flushed after each optimizer step
 - **Gradio frontend** — multi-tab web UI: Generate (chat), Compare Models (LoRA vs Full comparison table and per-model loss curves), Loss Curves (per-checkpoint diagnostic dashboard)
 - **LoRA checkpoint efficiency** — adapter-only saves (`_lora.pth` stores only adapter matrices, not the full model); config sidecar (`_lora_config.json`) records rank, alpha, and target modules for exact reproduction
+- **Post-training evaluation** — BERTScore F1 (semantic similarity) and ROUGE-L scored on the held-out test split; results saved to the metrics JSON and surfaced in all comparison plots
 - **Modular registry** — adding a new model family requires changes to exactly two files
 
 ---
@@ -81,10 +82,12 @@ llmFromScratch/
 │   ├── data/
 │   │   ├── instruction_dataset.py     # InstructionDataset — Alpaca-format tokenisation
 │   │   └── instruction_collator.py    # InstructionCollator — padding + target masking
+│   ├── evaluation/
+│   │   └── metrics.py                 # BERTScore F1 + ROUGE — evaluate(predictions, references)
 │   └── utils/
 │       ├── config.py                  # Hyperparameter configs for all models
 │       ├── lora.py                    # LoRA — apply_lora, enable_lora, disable_lora
-│       ├── plotting.py                # 2×3 training diagnostics dashboard
+│       ├── plotting.py                # Training diagnostics dashboard + comparison plots
 │       ├── tokenizer_adapter.py       # HFTokenizerAdapter — tiktoken-compatible wrapper
 │       ├── model_inference.py         # InferenceEngine
 │       ├── gpt_download.py            # GPT-2 checkpoint downloader
@@ -171,6 +174,8 @@ Fine-tuned weights are saved to `data/fine_tuned_weights/<model-name>.pth`. The 
 | `--grad-clip` | `0.5` | Max gradient L2 norm for clipping |
 | `--eval-freq` | `20` | Evaluate every N optimizer steps |
 | `--eval-iter` | `30` | Batches used per evaluation |
+| `--eval-samples` | `200` | Test entries scored with BERTScore/ROUGE after training (`0` to skip) |
+| `--bertscore-model` | `distilbert-base-uncased` | HuggingFace model used by BERTScore |
 
 ### Run the frontend
 
@@ -197,7 +202,33 @@ After each training run, a metrics JSON is saved alongside the weights. The `plo
 
 Each panel flags actionable problems automatically — constant clipping, widening overfitting gap, GPU under-utilisation, and low throughput — with a suggested fix inline.
 
-The run summary (effective batch size, peak LR, epoch count, LoRA r/α when applicable, training time, tok/s) is displayed as a subtitle under the figure title. Spike filtering removes timing outliers (epoch-boundary sample generation) from the step-time panel automatically.
+The run summary (effective batch size, peak LR, epoch count, LoRA r/α when applicable, training time, tok/s) is displayed as a subtitle under the figure title. When BERTScore/ROUGE evaluation was run, scores appear as a third subtitle line. Spike filtering removes timing outliers from the step-time panel automatically.
+
+---
+
+## Evaluation Metrics
+
+After training, `main.py` generates responses for up to `--eval-samples` entries from the **held-out test split** and scores them against the ground-truth references using two metrics:
+
+| Metric | What it measures | Why not BLEU |
+|---|---|---|
+| **BERTScore F1** | Semantic similarity via contextual embeddings — paraphrases score high | BLEU penalises valid rewording |
+| **ROUGE-L** | Longest common subsequence overlap — lightweight relative comparison | Kept as a cheap complement |
+
+```bash
+# Default: score 200 test entries after training
+python -m src.main --model "gpt2-small (124M)"
+
+# Faster scorer model, fewer samples
+python -m src.main --model "gpt2-small (124M)" --eval-samples 50
+
+# Skip evaluation entirely
+python -m src.main --model "gpt2-small (124M)" --eval-samples 0
+```
+
+Scores are saved to the metrics JSON (`bertscore_f1`, `rougeL`, etc.) and automatically appear in all three plot types — the loss curve subtitle, the per-model comparison table, and the All master table.
+
+Both `bert-score` and `rouge-score` are **optional** — if either package is missing, that scorer is skipped with a warning and the other still runs. Training is never blocked.
 
 ---
 
@@ -337,7 +368,7 @@ And one entry to `src/utils/config.py`:
 - [x] LoRA parameter-efficient fine-tuning
 - [x] Training diagnostic dashboard — 2×3 plots with self-diagnosing warnings
 - [x] HuggingFace weights loader with disk caching
-- [ ] Evaluation metrics (BLEU, ROUGE)
+- [x] Post-training evaluation — BERTScore F1 + ROUGE-L on held-out test split
 - [ ] HuggingFace Spaces deployment
 
 ---

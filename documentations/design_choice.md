@@ -259,6 +259,43 @@ A run-summary subtitle (effective batch, peak LR, epochs, LoRA r/α when applica
 | `gpu_memory_total_gb` | device query | scalar or None (MPS/CPU) |
 | `lora_rank` | `--lora-rank` arg | scalar or None (non-LoRA runs) |
 | `lora_alpha` | `--lora-alpha` arg | scalar or None (non-LoRA runs) |
+| `bertscore_f1`, `bertscore_precision`, `bertscore_recall` | post-training eval | scalar or absent (if eval skipped) |
+| `rouge1`, `rouge2`, `rougeL` | post-training eval | scalar or absent |
+| `eval_samples` | post-training eval | int — number of test entries scored |
+| `bertscore_model` | `--bertscore-model` arg | HuggingFace model ID used for BERTScore |
+
+---
+
+## Post-training Evaluation
+
+### Why BERTScore + ROUGE-L (not BLEU)
+
+BLEU counts exact n-gram matches — a valid paraphrase scores zero. For instruction-following outputs where models rephrase the reference, BLEU produces misleading comparisons between runs. BERTScore uses contextual token embeddings (via a small pretrained model) to measure semantic similarity, correctly scoring paraphrases as near-equivalent. ROUGE-L is kept as a cheap, widely understood complement via longest-common-subsequence overlap.
+
+### Architecture
+
+`src/evaluation/metrics.py` is a standalone module with a single public function:
+
+```python
+evaluate(predictions, references, bertscore_model, device) -> dict
+```
+
+Both scorers (`_bertscore`, `_rouge`) import their packages lazily inside the function body. This means:
+- The module itself can always be imported — no hard dependency at module load time
+- If `bert-score` is not installed, only BERTScore is skipped; ROUGE still runs (and vice versa)
+- The `from src.evaluation.metrics import evaluate` call in `main.py` is inside the `if args.eval_samples > 0:` guard — training is never blocked even if neither package is installed
+
+### Data Split
+
+Evaluation always runs on the **held-out test split** (10% of the dataset). The test split is never seen during training or validation loss computation, so BERTScore/ROUGE scores reflect genuine generalisation. Using the validation split would be circular (val loss already guides checkpointing); using the train split would be trivially inflated.
+
+### Integration
+
+The eval block runs post-training on the already-loaded fine-tuned model — no checkpoint reload. Predictions are generated with `ModelTrainer.generate_text_simple`, the same function used in the end-of-training sample inference. Scores are merged into the metrics dict via `**eval_scores` before `save_metrics` is called, so they land in the same JSON as training metrics and are visible in all three plot types.
+
+### BERTScore Reference Model
+
+Default: `distilbert-base-uncased` (~250 MB, ~3-4× faster than the `roberta-large` default). The model is downloaded once to the HuggingFace cache and reused on every subsequent run — consistent with the local-first caching pattern used for Gemma3 weights.
 
 ---
 

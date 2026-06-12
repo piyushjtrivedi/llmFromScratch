@@ -15,6 +15,7 @@ from src.models.registry import (get_model, get_weights_loader, save_weights,
 
 from src.utils.config import Model_Configs
 from src.utils.lora import apply_lora, _DEFAULT_TARGET_MODULES
+from src.evaluation.metrics import evaluate as _run_eval
 
 from src.data.instruction_dataset import InstructionDataset
 from src.data.instruction_collator import InstructionCollator
@@ -54,6 +55,12 @@ def main():
                         help="LoRA alpha scaling factor (default: 16.0)")
     parser.add_argument("--grad-clip", type=float, default=0.5,
                         help="Max gradient L2 norm for clipping (default: 0.5)")
+    parser.add_argument("--eval-samples", type=int, default=200,
+                        help="Test entries scored with BERTScore/ROUGE after training "
+                             "(0 to skip, default: 200)")
+    parser.add_argument("--bertscore-model", default="distilbert-base-uncased",
+                        help="HuggingFace model used by BERTScore "
+                             "(default: distilbert-base-uncased)")
     parser.add_argument("--eval-freq", type=int, default=20,
                         help="Evaluate every N optimizer steps (default: 20). "
                              "Low values (e.g. 5) make eval dominate runtime.")
@@ -232,6 +239,47 @@ def main():
     saved_path = save_weights(model, args.model, lora=args.lora)
     logger.info(f"[Checkpoint] Fine-tuned weights saved to {saved_path}")
 
+    # Post-training evaluation — BERTScore F1 + ROUGE on test entries.
+    # Runs on the already-loaded fine-tuned model; import is deferred so
+    # training works even if bert-score / rouge-score are not installed.
+    eval_scores: dict = {}
+    if args.eval_samples > 0:
+        logger.info(
+            f"[Evaluation] Generating {args.eval_samples} responses "
+            f"for BERTScore / ROUGE ..."
+        )
+        model.eval()
+        predictions, references = [], []
+        ctx_size = Model_Configs[args.model]["context_length"]
+        with torch.no_grad():
+            for entry in test_data[:args.eval_samples]:
+                input_text = InstructionDataset.format_input(entry)
+                token_ids = ModelTrainer.generate_text_simple(
+                    model=model,
+                    idx=ModelTrainer.text_to_token_ids(input_text, tokenizer).to(device),
+                    max_new_tokens=256,
+                    context_size=ctx_size,
+                    eos_id=pad_token_id,
+                )
+                generated = ModelTrainer.token_ids_to_text(token_ids, tokenizer)
+                prediction = (
+                    generated[len(input_text):]
+                    .replace("### Response:", "")
+                    .strip()
+                )
+                predictions.append(prediction)
+                references.append(entry["output"])
+        eval_scores = _run_eval(
+            predictions, references,
+            bertscore_model=args.bertscore_model,
+            device=str(device),
+        )
+        if eval_scores.get("bertscore_f1") is not None:
+            logger.info(
+                f"[Evaluation] BERTScore F1={eval_scores['bertscore_f1']:.4f}  "
+                f"ROUGE-L={eval_scores.get('rougeL', '—')}"
+            )
+
     # Save training metrics for loss curve visualisation
     save_metrics(
         {
@@ -257,6 +305,7 @@ def main():
                 torch.cuda.get_device_properties(device).total_memory / 1e9
                 if device.type == "cuda" else None
             ),
+            **eval_scores,
         },
         args.model,
         lora=args.lora,

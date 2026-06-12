@@ -10,3 +10,7 @@ huggingface_hub   # checkpoint download and caching
 safetensors       # preferred shard format for HF models
 transformers      # AutoTokenizer for HuggingFace tokenizers
 
+# Evaluation metrics — optional; training works without these
+bert-score        # BERTScore F1 (semantic similarity via contextual embeddings)
+rouge-score       # ROUGE-1/2/L (longest-common-subsequence text overlap)
+
