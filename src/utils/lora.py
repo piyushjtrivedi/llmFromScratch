@@ -6,10 +6,7 @@ import torch.nn as nn
 
 logger = logging.getLogger(__name__)
 
-# Default attention projection names shared by both GPT-2 and Gemma3.
-# Targets Q and V only — the minimal LoRA configuration from the original paper.
-# Add "W_key" or "out_proj" to target_modules to increase capacity at the cost
-# of more trainable parameters.
+# Q and V projections — minimal LoRA config from the original paper, shared by GPT-2 and Gemma3.
 _DEFAULT_TARGET_MODULES = ("W_query", "W_value")
 
 

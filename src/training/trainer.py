@@ -12,13 +12,10 @@ class ModelTrainer:
         self._reset_state()
 
     def _reset_state(self):
-        # Clears all per-run accumulators so the same instance can be called
-        # multiple times without metrics from a previous run contaminating the next.
+        # Clear accumulators so the same instance can be reused across runs.
         self.train_losses, self.val_losses, self.track_tokens_seen = [], [], []
-        # Supplementary training health metrics recorded at each eval step
         self.learning_rates, self.grad_norms, self.peak_memory_gb = [], [], []
         self.tokens_seen, self.global_step = 0, -1
-        # Tracks the best validation loss seen so far for best-model checkpointing
         self._best_val_loss = float("inf")
         self.step_times_sec = []
         self._step_start_time = None 
@@ -30,46 +27,31 @@ class ModelTrainer:
 
         self._reset_state()
 
-        # Main training loop
         for epoch in range(num_epochs):
-            model.train()  # Set model to training mode
+            model.train()
 
             for i, (input_batch, target_batch) in enumerate(train_loader):
                 loss = LossCalibrator.calc_loss_batch(input_batch, target_batch, model, device)
-                # Scale loss so accumulated gradients match a single full-batch update
+                # Scale so accumulated gradients equal a single full-batch update.
                 loss = loss / gradient_accumulation_steps
-                loss.backward() # Calculate loss gradients
-                self.tokens_seen += input_batch.numel() # Returns the total number of elements (or tokens) in the input_batch.
+                loss.backward()
+                self.tokens_seen += input_batch.numel()
 
                 is_last_batch = (i + 1) == len(train_loader)
                 if (i + 1) % gradient_accumulation_steps == 0 or is_last_batch:
-                    # Clip the L2 norm of all parameter gradients to max_norm=0.5.
-                    # If the combined gradient vector is larger than 0.5, every gradient
-                    # is scaled down proportionally so the norm equals 0.5.
-                    # This prevents a single bad batch from producing exploding gradients
-                    # that destabilise training — important for Gemma3 (random init) and
-                    # also protects GPT-2 fine-tuning runs.
-                    # clip_grad_norm_ returns the pre-clip norm, which we record at eval
-                    # steps to diagnose instability (persistent norm == max_norm means
-                    # clipping is always active and lr/init may need tuning).
+                    # clip_grad_norm_ returns pre-clip norm — recorded to diagnose instability.
                     grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=grad_clip)
-                    optimizer.step() # Update model weights using loss gradients
-                    # Advance the LR schedule by one step after each weight update.
-                    # Called per optimizer step (not per epoch) so warmup and decay
-                    # progress smoothly regardless of dataset size or batch size.
-                    # scheduler=None means a fixed LR is used — behaviour is unchanged
-                    # for callers that don't pass a scheduler.
+                    optimizer.step()
+                    # Step per optimizer update, not per epoch.
                     if scheduler is not None:
                         scheduler.step()
 
-                    # Record time for this optimizer step (pure training time, not including eval).
-                    # The start time is reset AFTER eval below so that eval time is never
-                    # absorbed into the next step's measurement.
+                    # Pure training time — timer resets after eval so eval time is excluded.
                     if self._step_start_time is not None:
                         self.step_times_sec.append(time.time() - self._step_start_time)
 
-                    optimizer.zero_grad(set_to_none=True) # Reset loss gradients from previous batch iteration (set_to_none frees memory immediately)
-                    # Free MPS/CUDA cache after each weight update to avoid fragmentation
+                    optimizer.zero_grad(set_to_none=True)
+                    # Free MPS cache after each update to prevent fragmentation.
                     if device.type == "mps":
                         torch.mps.empty_cache()
                     self.global_step += 1
@@ -89,8 +71,7 @@ class ModelTrainer:
                         # Pre-clip gradient norm captured from clip_grad_norm_ above
                         self.grad_norms.append(grad_norm.item())
 
-                        # Peak memory in GB — CUDA resets the high-water mark after each
-                        # sample so we see per-interval peaks; MPS reports current usage
+                        # CUDA: peak since last reset; MPS: current usage.
                         self.peak_memory_gb.append(
                             ModelTrainer._peak_memory_gb(device)
                         )
@@ -103,10 +84,7 @@ class ModelTrainer:
                             f"LR {lr:.2e}, Grad norm {grad_norm.item():.3f}, "
                             f"Mem {self.peak_memory_gb[-1]:.2f} GB"
                         )
-                        # Save a checkpoint whenever val loss improves.
-                        # This guards against overfitting: if val loss dips then rises,
-                        # the saved weights are from the best generalising point, not
-                        # the end of training. Skipped if model_name is not provided.
+                        # Save best checkpoint — guards against keeping overfit final weights.
                         if model_name is not None and val_loss < self._best_val_loss:
                             self._best_val_loss = val_loss
                             save_weights(model, model_name, lora=lora)
@@ -120,12 +98,11 @@ class ModelTrainer:
             if device.type == "mps":
                 torch.mps.empty_cache()
 
-            # Print a sample text after each epoch
+            # Sample generation
             ModelTrainer.generate_and_print_sample(
                 model, tokenizer, device, start_context
             )
-            # Reset timer after sample generation so the first step of the next
-            # epoch doesn't absorb text-generation time into its measurement.
+            # Exclude generation time from the first step of the next epoch.
             self._step_start_time = time.time()
 
         return self.train_losses, self.val_losses, self.track_tokens_seen
@@ -159,7 +136,7 @@ class ModelTrainer:
             )
         decoded_text = ModelTrainer.token_ids_to_text(token_ids, tokenizer)
         clean_text = decoded_text.replace("\n", " ")
-        logger.info(f"Sample :{clean_text}") # Compact print format
+        logger.info(f"Sample :{clean_text}")
         model.train()
 
     
@@ -177,20 +154,18 @@ class ModelTrainer:
     @staticmethod
     def generate_text_simple(model, idx, max_new_tokens, context_size, temperature=0.0, top_k=None, eos_id=None):
 
-        # For-loop is the same as before: Get logits, and only focus on last time step
         for _ in range(max_new_tokens):
             idx_cond = idx[:, -context_size:]
             logits = model(idx_cond)
             logits = logits[:, -1, :]
 
-            # New: Filter logits with top_k sampling
+            # top-k filtering
             if top_k is not None:
-                # Keep only top_k values
                 top_logits, _ = torch.topk(logits, top_k)
                 min_val = top_logits[:, -1]
                 logits = torch.where(logits < min_val, torch.full_like(logits, float("-inf")), logits)
 
-            # New: Apply temperature scaling
+            # Temperature scaling
             if temperature > 0.0:
                 logits = logits / temperature
 
@@ -200,14 +175,13 @@ class ModelTrainer:
                 # Sample from the distribution
                 idx_next = torch.multinomial(probs, num_samples=1)  # (batch_size, 1)
 
-            # Otherwise same as before: get idx of the vocab entry with the highest logits value
+            # Greedy decoding
             else:
                 idx_next = torch.argmax(logits, dim=-1, keepdim=True)  # (batch_size, 1)
 
-            if eos_id is not None and (idx_next == eos_id).any():  # Stop generating early if end-of-sequence token is encountered and eos_id is specified
+            if eos_id is not None and (idx_next == eos_id).any():
                 break
 
-            # Same as before: append sampled index to the running sequence
             idx = torch.cat((idx, idx_next), dim=1)  # (batch_size, num_tokens+1)
 
         return idx

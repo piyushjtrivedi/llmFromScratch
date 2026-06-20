@@ -79,24 +79,13 @@ def main():
     weights_loader(model)
     logger.info("[Loaded pretrained weights]")
 
-    # Optionally apply LoRA: freeze the base weights and add small trainable
-    # A/B adapter matrices to the target attention projections. When --lora is
-    # not passed the model trains all parameters as normal.
     if args.lora:
         apply_lora(model, r=args.lora_rank, alpha=args.lora_alpha)
         save_lora_config(args.model, r=args.lora_rank, alpha=args.lora_alpha,
                          target_modules=list(_DEFAULT_TARGET_MODULES))
 
-    # AdamW with transformer-standard hyperparameters.
-    # beta2=0.95 (vs PyTorch default 0.999): the second moment estimate decays faster,
-    # so stale gradient history from early training steps has less influence on later
-    # updates. This is the value used in GPT-3, Chinchilla, and PaLM and works better
-    # than the default for both fine-tuning GPT-2 and training Gemma3 from scratch.
-    # eps=1e-8 is fine for fp32; 1e-8 is PyTorch default so no change needed here
-    # unless switching to bf16/fp16 where 1e-9 adds numerical stability.
-    # When LoRA is active, only the adapter matrices have requires_grad=True.
-    # Passing only those to the optimizer avoids AdamW allocating moment buffers
-    # for the frozen base weights, which would roughly double memory usage.
+    # beta2=0.95 matches GPT-3/Chinchilla (faster second-moment decay than default 0.999).
+    # Passing only trainable params avoids allocating AdamW moment buffers for frozen weights.
     trainable_params = [p for p in model.parameters() if p.requires_grad]
     optimizer = torch.optim.AdamW(
         trainable_params, lr=args.lr, weight_decay=0.1, betas=(0.9, 0.95)
@@ -192,23 +181,14 @@ def main():
 
     model.to(device)
 
-    # LR scheduler: linear warmup for `warmup_steps` optimizer steps, then cosine
-    # decay down to 10% of peak LR over the remaining steps.
-    # - Warmup: prevents large gradient updates at the start when weights are either
-    #   random (Gemma3) or just loaded and not yet adapted (GPT-2 fine-tuning).
-    # - Cosine decay: smoothly reduces LR as training converges, avoiding oscillation
-    #   around the minimum that a fixed LR can cause.
-    # total_steps = optimizer updates per epoch × epochs (each epoch has
-    # len(train_loader) / gradient_accumulation_steps optimizer steps).
+    # Warmup → cosine decay, stepped per optimizer update (not per epoch).
     steps_per_epoch = len(train_loader) // gradient_accumulation_steps
     total_steps = steps_per_epoch * args.epochs
     warmup_steps = min(args.warmup_steps, total_steps)
     scheduler = SequentialLR(
         optimizer,
         schedulers=[
-            # Phase 1: ramp LR from ~0 up to args.lr over warmup_steps
             LinearLR(optimizer, start_factor=0.01, end_factor=1.0, total_iters=warmup_steps),
-            # Phase 2: cosine decay from args.lr down to 10% of args.lr
             CosineAnnealingLR(optimizer, T_max=total_steps - warmup_steps, eta_min=args.lr * 0.1),
         ],
         milestones=[warmup_steps],
@@ -239,9 +219,7 @@ def main():
     saved_path = save_weights(model, args.model, lora=args.lora)
     logger.info(f"[Checkpoint] Fine-tuned weights saved to {saved_path}")
 
-    # Post-training evaluation — BERTScore F1 + ROUGE on test entries.
-    # Runs on the already-loaded fine-tuned model; import is deferred so
-    # training works even if bert-score / rouge-score are not installed.
+    # BERTScore + ROUGE on held-out test set; packages are optional — training is unaffected if missing.
     eval_scores: dict = {}
     if args.eval_samples > 0:
         logger.info(
