@@ -27,6 +27,9 @@ data/hf_cache/
 *\ copy.py
 * copy.py
 
+# UI Images
+images/
+
 # OS
 .DS_Store
 Thumbs.db

@@ -355,8 +355,8 @@ def plot_comparison_table(metrics_by_model: dict) -> plt.Figure:
         return name.replace("gemma3", "Gemma3").replace("gpt2", "GPT2")
 
     headers   = ["Model", "Mode", "Best Val↓", "Perplexity↓",
-                 "Best Step", "Time", "Tok/s", "Peak Mem", "GPU Util", "BERTScore↑"]
-    col_w     = [0.12, 0.07, 0.09, 0.09, 0.10, 0.07, 0.07, 0.09, 0.08, 0.10]
+                 "Best Step", "Time", "Tok/s", "Peak Mem", "GPU Util", "BERTScore↑", "ROUGE-L↑"]
+    col_w     = [0.11, 0.07, 0.09, 0.09, 0.10, 0.07, 0.07, 0.08, 0.07, 0.09, 0.08]
 
     rows, meta = [], []
     for model_name, variants in metrics_by_model.items():
@@ -374,7 +374,8 @@ def plot_comparison_table(metrics_by_model: dict) -> plt.Figure:
                 exec_t    = m.get("execution_time_minutes")
                 tps       = m.get("tokens_per_sec")
 
-                bs_f1 = m.get("bertscore_f1")
+                bs_f1   = m.get("bertscore_f1")
+                rouge_l = m.get("rougeL")
                 rows.append([
                     _short(model_name),
                     mode_label,
@@ -385,15 +386,17 @@ def plot_comparison_table(metrics_by_model: dict) -> plt.Figure:
                     str(int(tps)) if tps else "—",
                     f"{peak_mem:.1f} GB" if peak_mem else "—",
                     f"{peak_mem/gpu_total*100:.0f}%" if (peak_mem and gpu_total) else "—",
-                    f"{bs_f1:.3f}" if bs_f1 is not None else "—",
+                    f"{bs_f1:.3f}"   if bs_f1   is not None else "—",
+                    f"{rouge_l:.3f}" if rouge_l is not None else "—",
                 ])
                 meta.append({"mode": mode_key, "model": model_name,
                              "best_val": best_val, "step_sym": step_sym,
-                             "bertscore_f1": bs_f1})
+                             "bertscore_f1": bs_f1, "rougeL": rouge_l})
             else:
-                rows.append([_short(model_name), mode_label] + ["—"] * 8)
+                rows.append([_short(model_name), mode_label] + ["—"] * 9)
                 meta.append({"mode": mode_key, "model": model_name,
-                             "best_val": None, "step_sym": None, "bertscore_f1": None})
+                             "best_val": None, "step_sym": None,
+                             "bertscore_f1": None, "rougeL": None})
 
     n_rows   = len(rows)
     fig_h    = max(3.5, 1.6 + n_rows * 0.72 + 1.0)
@@ -466,6 +469,11 @@ def plot_comparison_table(metrics_by_model: dict) -> plt.Figure:
             fb = meta[full_r].get("bertscore_f1")
             if lb is not None and fb is not None:
                 better_cells.add(((lora_r if lb > fb else full_r) + 1, 9))
+            # ROUGE-L — higher is better (col 10)
+            lr = meta[lora_r].get("rougeL")
+            fr = meta[full_r].get("rougeL")
+            if lr is not None and fr is not None:
+                better_cells.add(((lora_r if lr > fr else full_r) + 1, 10))
 
     for r_idx, (row_data, m) in enumerate(zip(rows, meta)):
         tbl_row = r_idx + 1
@@ -491,8 +499,8 @@ def plot_comparison_table(metrics_by_model: dict) -> plt.Figure:
         elif m["step_sym"] == "△":
             step_cell.set_text_props(color=C_AMBER)
 
-        # Best Val, Perplexity, BERTScore — highlight the winner
-        for c in (2, 3, 9):
+        # Best Val, Perplexity, BERTScore, ROUGE-L — highlight the winner
+        for c in (2, 3, 9, 10):
             if (tbl_row, c) in better_cells:
                 tbl[(tbl_row, c)].set_text_props(color=C_GREEN, fontweight="bold")
 
@@ -618,12 +626,12 @@ def plot_comparison(metrics_by_model: dict) -> plt.Figure:
     C_AMBER_T = "#fbbf24"
 
     headers  = ["Model", "Variant", "Final Val↓", "Best Val↓", "Perplexity↓",
-                "Best Step", "Time", "Tok/s", "Peak Mem", "GPU Util", "BERTScore↑"]
-    col_w_t  = [0.10, 0.08, 0.09, 0.09, 0.09, 0.10, 0.07, 0.07, 0.09, 0.07, 0.09]
+                "Best Step", "Time", "Tok/s", "Peak Mem", "GPU Util", "BERTScore↑", "ROUGE-L↑"]
+    col_w_t  = [0.10, 0.07, 0.08, 0.08, 0.08, 0.09, 0.07, 0.07, 0.08, 0.06, 0.08, 0.08]
 
     def _extract(m):
         if m is None:
-            return ["—"] * 9
+            return ["—"] * 10
         best_idx  = int(np.argmin(m["val_losses"]))
         total     = len(m["val_losses"])
         best_val  = float(min(m["val_losses"]))
@@ -634,6 +642,7 @@ def plot_comparison(metrics_by_model: dict) -> plt.Figure:
         exec_t    = m.get("execution_time_minutes")
         tps       = m.get("tokens_per_sec")
         bs_f1     = m.get("bertscore_f1")
+        rouge_l   = m.get("rougeL")
         return [
             f"{m['val_losses'][-1]:.4f}",
             f"{best_val:.4f}",
@@ -643,7 +652,8 @@ def plot_comparison(metrics_by_model: dict) -> plt.Figure:
             str(int(tps)) if tps else "—",
             f"{peak_mem:.1f} GB" if peak_mem else "—",
             f"{peak_mem/gpu_total*100:.0f}%" if (peak_mem and gpu_total) else "—",
-            f"{bs_f1:.3f}" if bs_f1 is not None else "—",
+            f"{bs_f1:.3f}"   if bs_f1   is not None else "—",
+            f"{rouge_l:.3f}" if rouge_l is not None else "—",
         ]
 
     def _num(s):
@@ -678,10 +688,10 @@ def plot_comparison(metrics_by_model: dict) -> plt.Figure:
         cell.set_edgecolor("#2d3148")
 
     # col indices: 0=Model 1=Variant 2=FinalVal 3=BestVal 4=Perplexity
-    #              5=BestStep 6=Time 7=Tok/s 8=PeakMem 9=GPUUtil 10=BERTScore
-    metric_cols  = [2, 3, 4, 6, 7, 8, 10]
-    lower_better = {2, 3, 4, 6, 8}      # losses, perplexity, time, memory
-    higher_better = {7, 10}             # tok/s, BERTScore
+    #              5=BestStep 6=Time 7=Tok/s 8=PeakMem 9=GPUUtil 10=BERTScore 11=ROUGE-L
+    metric_cols   = [2, 3, 4, 6, 7, 8, 10, 11]
+    lower_better  = {2, 3, 4, 6, 8}       # losses, perplexity, time, memory
+    higher_better = {7, 10, 11}            # tok/s, BERTScore, ROUGE-L
 
     for pair_idx in range(len(models)):
         full_row = pair_idx * 2 + 1   # 1-indexed (0 = header)
